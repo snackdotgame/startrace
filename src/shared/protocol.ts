@@ -1,4 +1,8 @@
 import {
+  MOTHERSHIP_HEIGHT,
+  MOTHERSHIP_MAX_HP,
+  MOTHERSHIP_WIDTH,
+  MOTHERSHIP_X_INSET,
   WORLD_HEIGHT,
   WORLD_WIDTH,
   type ActionMessage,
@@ -9,6 +13,7 @@ import {
   type MothershipView,
   type ProjectileKind,
   type ProjectileView,
+  type SalvageSnapshotMessage,
   type SalvageView,
   type ShipClass,
   type ShipStats,
@@ -18,12 +23,13 @@ import {
   type Team,
 } from "./messages.js";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 7;
 export const DATAGRAM_BUDGET_BYTES = 1000;
-export const MAX_SNAPSHOT_SHIPS = 12;
-export const MAX_SNAPSHOT_ASTEROIDS = 18;
-export const MAX_SNAPSHOT_SALVAGE = 8;
-export const MAX_SNAPSHOT_PROJECTILES = 18;
+export const MAX_SNAPSHOT_SHIPS = 10;
+export const MAX_SNAPSHOT_ASTEROIDS = 12;
+export const MAX_SNAPSHOT_SALVAGE = 6;
+export const MAX_SNAPSHOT_PROJECTILES = 12;
+export const MAX_SALVAGE_PACKET_ITEMS = 70;
 
 export enum PacketKind {
   Input = 1,
@@ -32,6 +38,7 @@ export enum PacketKind {
   Event = 4,
   Effect = 5,
   Identity = 6,
+  Salvage = 7,
 }
 
 export interface PlayerIdentity {
@@ -44,14 +51,15 @@ export interface IdentityBatch {
   identities: PlayerIdentity[];
 }
 
-const INPUT_BYTES = 15;
+const INPUT_BYTES = 19;
 const ACTION_BYTES = 4;
-const EFFECT_BYTES = 13;
+const EFFECT_BYTES = 17;
 const SNAPSHOT_HEADER_BYTES = 27;
-const SHIP_BYTES = 24;
-const ASTEROID_BYTES = 17;
-const SALVAGE_BYTES = 9;
-const PROJECTILE_BYTES = 16;
+const SHIP_BYTES = 32;
+const ASTEROID_BYTES = 25;
+const SALVAGE_BYTES = 14;
+const SALVAGE_HEADER_BYTES = 7;
+const PROJECTILE_BYTES = 20;
 const MAX_IDENTITIES = 16;
 const MAX_NAME_BYTES = 24;
 const MAX_EVENT_BYTES = 160;
@@ -59,13 +67,41 @@ const MOVE_SCALE = 32767;
 const VELOCITY_SCALE = 8;
 const HEALTH_SCALE = 4;
 const INTENSITY_SCALE = 32;
-const MOTHERSHIP_MAX_HP = 1800;
-const MOTHERSHIP_WIDTH = 180;
-const MOTHERSHIP_HEIGHT = 720;
+const MAX_ABS_COORDINATE = 10_000_000;
 const UTF8_ENCODER = new TextEncoder();
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
-const SHIP_CLASSES: readonly ShipClass[] = ["scout", "needle", "hive", "star", "chevron"];
+const SHIP_CLASSES: readonly ShipClass[] = [
+  "scout",
+  "needle",
+  "hive",
+  "star",
+  "chevron",
+  "lance",
+  "fork",
+  "brood",
+  "bastion",
+  "nova",
+  "prism",
+  "ram",
+  "comet",
+  "railcore",
+  "barrage",
+  "swarm",
+  "fortress",
+  "supernova",
+  "spectrum",
+  "juggernaut",
+  "interceptor",
+  "deadeye",
+  "tempest",
+  "queen",
+  "citadel",
+  "quasar",
+  "kaleidoscope",
+  "behemoth",
+  "streak",
+];
 const STAT_NAMES: readonly StatName[] = ["weapon", "engine", "hull", "mining"];
 const PROJECTILE_KINDS: readonly ProjectileKind[] = ["bolt", "needle", "drone", "turret"];
 const EFFECT_KINDS: readonly EffectMessage["kind"][] = [
@@ -75,6 +111,7 @@ const EFFECT_KINDS: readonly EffectMessage["kind"][] = [
   "shipBreak",
   "baseHit",
   "dashHit",
+  "pickup",
 ];
 
 class Writer {
@@ -104,6 +141,11 @@ class Writer {
 
   u32(value: number): void {
     this.view.setUint32(this.offset, value, true);
+    this.offset += 4;
+  }
+
+  f32(value: number): void {
+    this.view.setFloat32(this.offset, value, true);
     this.offset += 4;
   }
 
@@ -158,6 +200,13 @@ class Reader {
     return value;
   }
 
+  f32(): number | undefined {
+    if (!this.remaining(4)) return undefined;
+    const value = this.view.getFloat32(this.offset, true);
+    this.offset += 4;
+    return value;
+  }
+
   raw(count: number): Uint8Array | undefined {
     if (!this.remaining(count)) return undefined;
     const value = this.bytes.subarray(this.offset, this.offset + count);
@@ -173,7 +222,7 @@ class Reader {
 export function packetKind(bytes: Uint8Array): PacketKind | undefined {
   if (bytes.byteLength < 2 || bytes[0] !== PROTOCOL_VERSION) return undefined;
   const kind = bytes[1];
-  return kind >= PacketKind.Input && kind <= PacketKind.Identity ? (kind as PacketKind) : undefined;
+  return kind >= PacketKind.Input && kind <= PacketKind.Salvage ? (kind as PacketKind) : undefined;
 }
 
 export function encodeInput(message: InputMessage): Uint8Array {
@@ -181,8 +230,8 @@ export function encodeInput(message: InputMessage): Uint8Array {
     !isUint32(message.sequence) ||
     !finiteIn(message.moveX, -1, 1) ||
     !finiteIn(message.moveY, -1, 1) ||
-    !finiteIn(message.aimX, 0, WORLD_WIDTH) ||
-    !finiteIn(message.aimY, 0, WORLD_HEIGHT)
+    !isCoordinate(message.aimX) ||
+    !isCoordinate(message.aimY)
   ) {
     throw new Error("Invalid local input packet");
   }
@@ -192,8 +241,8 @@ export function encodeInput(message: InputMessage): Uint8Array {
   writer.u32(message.sequence);
   writer.i16(Math.round(message.moveX * MOVE_SCALE));
   writer.i16(Math.round(message.moveY * MOVE_SCALE));
-  writer.u16(quantizeUnit(message.aimX, WORLD_WIDTH));
-  writer.u16(quantizeUnit(message.aimY, WORLD_HEIGHT));
+  writer.f32(message.aimX);
+  writer.f32(message.aimY);
   writer.u8(message.fire ? 1 : 0);
   return writer.finish();
 }
@@ -205,8 +254,8 @@ export function decodeInput(bytes: Uint8Array): InputMessage | undefined {
   const sequence = reader.u32();
   const rawMoveX = reader.i16();
   const rawMoveY = reader.i16();
-  const rawAimX = reader.u16();
-  const rawAimY = reader.u16();
+  const rawAimX = reader.f32();
+  const rawAimY = reader.f32();
   const flags = reader.u8();
   if (
     sequence === undefined ||
@@ -214,6 +263,8 @@ export function decodeInput(bytes: Uint8Array): InputMessage | undefined {
     rawMoveY === undefined ||
     rawAimX === undefined ||
     rawAimY === undefined ||
+    !isCoordinate(rawAimX) ||
+    !isCoordinate(rawAimY) ||
     flags === undefined ||
     rawMoveX < -MOVE_SCALE ||
     rawMoveY < -MOVE_SCALE ||
@@ -227,8 +278,8 @@ export function decodeInput(bytes: Uint8Array): InputMessage | undefined {
     sequence,
     moveX: rawMoveX / MOVE_SCALE,
     moveY: rawMoveY / MOVE_SCALE,
-    aimX: dequantizeUnit(rawAimX, WORLD_WIDTH),
-    aimY: dequantizeUnit(rawAimY, WORLD_HEIGHT),
+    aimX: rawAimX,
+    aimY: rawAimY,
     fire: flags === 1,
   };
 }
@@ -316,8 +367,8 @@ export function encodeEffect(message: EffectMessage): Uint8Array {
   if (
     kind < 0 ||
     !isUint32(message.id) ||
-    !finiteIn(message.x, 0, WORLD_WIDTH) ||
-    !finiteIn(message.y, 0, WORLD_HEIGHT) ||
+    !isCoordinate(message.x) ||
+    !isCoordinate(message.y) ||
     !finiteIn(message.intensity, 0, 255 / INTENSITY_SCALE)
   ) {
     throw new Error("Invalid local effect packet");
@@ -328,8 +379,8 @@ export function encodeEffect(message: EffectMessage): Uint8Array {
   writer.u32(message.id);
   writer.u8(kind);
   writer.u8(message.team === undefined ? 0 : message.team === "cyan" ? 1 : 2);
-  writer.u16(quantizeUnit(message.x, WORLD_WIDTH));
-  writer.u16(quantizeUnit(message.y, WORLD_HEIGHT));
+  writer.f32(message.x);
+  writer.f32(message.y);
   writer.u8(Math.round(message.intensity * INTENSITY_SCALE));
   return writer.finish();
 }
@@ -342,8 +393,8 @@ export function decodeEffect(bytes: Uint8Array): EffectMessage | undefined {
   const id = reader.u32();
   const kind = reader.u8();
   const team = reader.u8();
-  const x = reader.u16();
-  const y = reader.u16();
+  const x = reader.f32();
+  const y = reader.f32();
   const intensity = reader.u8();
   if (
     id === undefined ||
@@ -353,6 +404,8 @@ export function decodeEffect(bytes: Uint8Array): EffectMessage | undefined {
     team > 2 ||
     x === undefined ||
     y === undefined ||
+    !isCoordinate(x) ||
+    !isCoordinate(y) ||
     intensity === undefined ||
     !reader.done()
   ) {
@@ -362,8 +415,8 @@ export function decodeEffect(bytes: Uint8Array): EffectMessage | undefined {
     type: "effect",
     id,
     kind: EFFECT_KINDS[kind],
-    x: dequantizeUnit(x, WORLD_WIDTH),
-    y: dequantizeUnit(y, WORLD_HEIGHT),
+    x,
+    y,
     team: team === 0 ? undefined : team === 1 ? "cyan" : "magenta",
     intensity: intensity / INTENSITY_SCALE,
   };
@@ -565,20 +618,64 @@ export function decodeSnapshot(
   };
 }
 
+export function encodeSalvageSnapshot(message: SalvageSnapshotMessage): Uint8Array {
+  if (!isUint32(message.sequence) || message.salvage.length > MAX_SALVAGE_PACKET_ITEMS) {
+    throw new Error("Invalid local salvage snapshot");
+  }
+  const writer = new Writer(SALVAGE_HEADER_BYTES + message.salvage.length * SALVAGE_BYTES);
+  writer.u8(PROTOCOL_VERSION);
+  writer.u8(PacketKind.Salvage);
+  writer.u32(message.sequence);
+  writer.u8(message.salvage.length);
+  for (const item of message.salvage) writeSalvage(writer, item);
+  const bytes = writer.finish();
+  if (bytes.byteLength > DATAGRAM_BUDGET_BYTES) {
+    throw new Error(`Salvage snapshot exceeds ${DATAGRAM_BUDGET_BYTES} bytes`);
+  }
+  return bytes;
+}
+
+export function decodeSalvageSnapshot(bytes: Uint8Array): SalvageSnapshotMessage | undefined {
+  if (
+    bytes.byteLength < SALVAGE_HEADER_BYTES ||
+    bytes.byteLength > DATAGRAM_BUDGET_BYTES ||
+    packetKind(bytes) !== PacketKind.Salvage
+  ) {
+    return undefined;
+  }
+  const reader = new Reader(bytes);
+  reader.offset = 2;
+  const sequence = reader.u32();
+  const count = reader.u8();
+  if (
+    sequence === undefined ||
+    count === undefined ||
+    count > MAX_SALVAGE_PACKET_ITEMS ||
+    bytes.byteLength !== SALVAGE_HEADER_BYTES + count * SALVAGE_BYTES
+  ) {
+    return undefined;
+  }
+  const salvage: SalvageView[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const item = readSalvage(reader);
+    if (!item) return undefined;
+    salvage.push(item);
+  }
+  return reader.done() ? { type: "salvageSnapshot", sequence, salvage } : undefined;
+}
+
 function writeShip(writer: Writer, ship: ShipView): void {
   const classIndex = SHIP_CLASSES.indexOf(ship.shipClass);
   if (classIndex < 0) throw new Error("Invalid ship class");
   writer.u16(parseWireId(ship.id));
   writer.u8(
-    (teamBit(ship.team) |
-      (classIndex << 1) |
-      (ship.docked ? 16 : 0) |
-      (ship.alive ? 32 : 0) |
-      (ship.dashing ? 64 : 0)) >>>
+    (teamBit(ship.team) | (ship.docked ? 2 : 0) | (ship.alive ? 4 : 0) | (ship.dashing ? 8 : 0)) >>>
       0,
   );
-  writer.u16(quantizeUnit(ship.x, WORLD_WIDTH));
-  writer.u16(quantizeUnit(ship.y, WORLD_HEIGHT));
+  writer.u8(classIndex);
+  if (!isCoordinate(ship.x) || !isCoordinate(ship.y)) throw new Error("Invalid ship position");
+  writer.f32(ship.x);
+  writer.f32(ship.y);
   writer.i16(quantizeVelocity(ship.vx));
   writer.i16(quantizeVelocity(ship.vy));
   writer.u16(quantizeAngle(ship.angle));
@@ -586,15 +683,17 @@ function writeShip(writer: Writer, ship: ShipView): void {
   writer.u16(quantizeHealth(ship.maxHp));
   writer.u16(clampUint16(ship.cargo));
   writer.u16(clampUint16(ship.bank));
-  writer.u8(packStats(ship.stats));
+  writer.u16(clampUint16(ship.research));
+  writer.u16(packStats(ship.stats));
   writer.u16(quantizeDuration(ship.respawnIn));
 }
 
 function readShip(reader: Reader, namesById: ReadonlyMap<number, string>): ShipView | undefined {
   const id = reader.u16();
   const flags = reader.u8();
-  const x = reader.u16();
-  const y = reader.u16();
+  const classIndex = reader.u8();
+  const x = reader.f32();
+  const y = reader.f32();
   const vx = reader.i16();
   const vy = reader.i16();
   const angle = reader.u16();
@@ -602,18 +701,38 @@ function readShip(reader: Reader, namesById: ReadonlyMap<number, string>): ShipV
   const maxHp = reader.u16();
   const cargo = reader.u16();
   const bank = reader.u16();
-  const stats = reader.u8();
+  const research = reader.u16();
+  const stats = reader.u16();
   const respawn = reader.u16();
   if (
-    [id, flags, x, y, vx, vy, angle, hp, maxHp, cargo, bank, stats, respawn].some(
-      (value) => value === undefined,
-    )
+    [
+      id,
+      flags,
+      classIndex,
+      x,
+      y,
+      vx,
+      vy,
+      angle,
+      hp,
+      maxHp,
+      cargo,
+      bank,
+      research,
+      stats,
+      respawn,
+    ].some((value) => value === undefined)
   )
     return undefined;
   const safeId = id as number;
   const safeFlags = flags as number;
-  const classIndex = (safeFlags >>> 1) & 7;
-  if (safeId === 0 || classIndex >= SHIP_CLASSES.length || (safeFlags & 128) !== 0)
+  if (
+    safeId === 0 ||
+    (classIndex as number) >= SHIP_CLASSES.length ||
+    (safeFlags & 240) !== 0 ||
+    !isCoordinate(x as number) ||
+    !isCoordinate(y as number)
+  )
     return undefined;
   const unpacked = unpackStats(stats as number);
   if (!unpacked) return undefined;
@@ -621,12 +740,12 @@ function readShip(reader: Reader, namesById: ReadonlyMap<number, string>): ShipV
     id: String(safeId),
     name: namesById.get(safeId) ?? `PILOT ${safeId}`,
     team: (safeFlags & 1) === 0 ? "cyan" : "magenta",
-    shipClass: SHIP_CLASSES[classIndex],
-    docked: (safeFlags & 16) !== 0,
-    alive: (safeFlags & 32) !== 0,
-    dashing: (safeFlags & 64) !== 0,
-    x: dequantizeUnit(x as number, WORLD_WIDTH),
-    y: dequantizeUnit(y as number, WORLD_HEIGHT),
+    shipClass: SHIP_CLASSES[classIndex as number],
+    docked: (safeFlags & 2) !== 0,
+    alive: (safeFlags & 4) !== 0,
+    dashing: (safeFlags & 8) !== 0,
+    x: x as number,
+    y: y as number,
     vx: (vx as number) / VELOCITY_SCALE,
     vy: (vy as number) / VELOCITY_SCALE,
     angle: dequantizeAngle(angle as number),
@@ -634,6 +753,7 @@ function readShip(reader: Reader, namesById: ReadonlyMap<number, string>): ShipV
     maxHp: (maxHp as number) / HEALTH_SCALE,
     cargo: cargo as number,
     bank: bank as number,
+    research: research as number,
     stats: unpacked,
     respawnIn: (respawn as number) / 100,
   };
@@ -641,8 +761,12 @@ function readShip(reader: Reader, namesById: ReadonlyMap<number, string>): ShipV
 
 function writeAsteroid(writer: Writer, asteroid: AsteroidView): void {
   writer.u32(assertUint32(asteroid.id, "asteroid id"));
-  writer.u16(quantizeUnit(asteroid.x, WORLD_WIDTH));
-  writer.u16(quantizeUnit(asteroid.y, WORLD_HEIGHT));
+  if (!isCoordinate(asteroid.x) || !isCoordinate(asteroid.y))
+    throw new Error("Invalid asteroid position");
+  writer.f32(asteroid.x);
+  writer.f32(asteroid.y);
+  writer.i16(quantizeVelocity(asteroid.vx));
+  writer.i16(quantizeVelocity(asteroid.vy));
   writer.u8(clampUint8(asteroid.radius));
   writer.u16(quantizeHealth(asteroid.hp));
   writer.u16(quantizeHealth(asteroid.maxHp));
@@ -651,17 +775,26 @@ function writeAsteroid(writer: Writer, asteroid: AsteroidView): void {
 
 function readAsteroid(reader: Reader): AsteroidView | undefined {
   const id = reader.u32();
-  const x = reader.u16();
-  const y = reader.u16();
+  const x = reader.f32();
+  const y = reader.f32();
+  const vx = reader.i16();
+  const vy = reader.i16();
   const radius = reader.u8();
   const hp = reader.u16();
   const maxHp = reader.u16();
   const seed = reader.u32();
-  if ([id, x, y, radius, hp, maxHp, seed].some((value) => value === undefined)) return undefined;
+  if (
+    [id, x, y, vx, vy, radius, hp, maxHp, seed].some((value) => value === undefined) ||
+    !isCoordinate(x as number) ||
+    !isCoordinate(y as number)
+  )
+    return undefined;
   return {
     id: id as number,
-    x: dequantizeUnit(x as number, WORLD_WIDTH),
-    y: dequantizeUnit(y as number, WORLD_HEIGHT),
+    x: x as number,
+    y: y as number,
+    vx: (vx as number) / VELOCITY_SCALE,
+    vy: (vy as number) / VELOCITY_SCALE,
     radius: radius as number,
     hp: (hp as number) / HEALTH_SCALE,
     maxHp: (maxHp as number) / HEALTH_SCALE,
@@ -671,22 +804,32 @@ function readAsteroid(reader: Reader): AsteroidView | undefined {
 
 function writeSalvage(writer: Writer, item: SalvageView): void {
   writer.u32(assertUint32(item.id, "salvage id"));
-  writer.u16(quantizeUnit(item.x, WORLD_WIDTH));
-  writer.u16(quantizeUnit(item.y, WORLD_HEIGHT));
+  if (!isCoordinate(item.x) || !isCoordinate(item.y)) throw new Error("Invalid salvage position");
+  writer.f32(item.x);
+  writer.f32(item.y);
   writer.u8(clampUint8(item.value));
+  writer.u8(item.team === undefined ? 0 : item.team === "cyan" ? 1 : 2);
 }
 
 function readSalvage(reader: Reader): SalvageView | undefined {
   const id = reader.u32();
-  const x = reader.u16();
-  const y = reader.u16();
+  const x = reader.f32();
+  const y = reader.f32();
   const value = reader.u8();
-  if ([id, x, y, value].some((entry) => entry === undefined)) return undefined;
+  const team = reader.u8();
+  if (
+    [id, x, y, value, team].some((entry) => entry === undefined) ||
+    (team as number) > 2 ||
+    !isCoordinate(x as number) ||
+    !isCoordinate(y as number)
+  )
+    return undefined;
   return {
     id: id as number,
-    x: dequantizeUnit(x as number, WORLD_WIDTH),
-    y: dequantizeUnit(y as number, WORLD_HEIGHT),
+    x: x as number,
+    y: y as number,
     value: value as number,
+    team: team === 0 ? undefined : team === 1 ? "cyan" : "magenta",
   };
 }
 
@@ -696,8 +839,10 @@ function writeProjectile(writer: Writer, projectile: ProjectileView): void {
   writer.u32(assertUint32(projectile.id, "projectile id"));
   writer.u16(projectile.ownerId === "turret" ? 0 : parseWireId(projectile.ownerId));
   writer.u8(teamBit(projectile.team) | (kind << 1));
-  writer.u16(quantizeUnit(projectile.x, WORLD_WIDTH));
-  writer.u16(quantizeUnit(projectile.y, WORLD_HEIGHT));
+  if (!isCoordinate(projectile.x) || !isCoordinate(projectile.y))
+    throw new Error("Invalid projectile position");
+  writer.f32(projectile.x);
+  writer.f32(projectile.y);
   writer.i16(quantizeVelocity(projectile.vx));
   writer.i16(quantizeVelocity(projectile.vy));
   writer.u8(clampUint8(projectile.radius));
@@ -707,12 +852,16 @@ function readProjectile(reader: Reader): ProjectileView | undefined {
   const id = reader.u32();
   const ownerId = reader.u16();
   const flags = reader.u8();
-  const x = reader.u16();
-  const y = reader.u16();
+  const x = reader.f32();
+  const y = reader.f32();
   const vx = reader.i16();
   const vy = reader.i16();
   const radius = reader.u8();
-  if ([id, ownerId, flags, x, y, vx, vy, radius].some((value) => value === undefined))
+  if (
+    [id, ownerId, flags, x, y, vx, vy, radius].some((value) => value === undefined) ||
+    !isCoordinate(x as number) ||
+    !isCoordinate(y as number)
+  )
     return undefined;
   const safeFlags = flags as number;
   const kind = (safeFlags >>> 1) & 3;
@@ -722,8 +871,8 @@ function readProjectile(reader: Reader): ProjectileView | undefined {
     ownerId: ownerId === 0 ? "turret" : String(ownerId),
     team: (safeFlags & 1) === 0 ? "cyan" : "magenta",
     kind: PROJECTILE_KINDS[kind],
-    x: dequantizeUnit(x as number, WORLD_WIDTH),
-    y: dequantizeUnit(y as number, WORLD_HEIGHT),
+    x: x as number,
+    y: y as number,
     vx: (vx as number) / VELOCITY_SCALE,
     vy: (vy as number) / VELOCITY_SCALE,
     radius: radius as number,
@@ -744,7 +893,7 @@ function validateSnapshotCounts(snapshot: SnapshotMessage): void {
 function makeMothership(team: Team, rawHp: number): MothershipView {
   return {
     team,
-    x: team === "cyan" ? 190 : WORLD_WIDTH - 190,
+    x: team === "cyan" ? MOTHERSHIP_X_INSET : WORLD_WIDTH - MOTHERSHIP_X_INSET,
     y: WORLD_HEIGHT / 2,
     width: MOTHERSHIP_WIDTH,
     height: MOTHERSHIP_HEIGHT,
@@ -761,12 +910,8 @@ function toneCode(tone: EventMessage["tone"]): number {
   return tone === "info" ? 0 : tone === "good" ? 1 : 2;
 }
 
-function quantizeUnit(value: number, maximum: number): number {
-  return Math.round((clamp(value, 0, maximum) / maximum) * 65535);
-}
-
-function dequantizeUnit(value: number, maximum: number): number {
-  return (value / 65535) * maximum;
+function isCoordinate(value: number): boolean {
+  return Number.isFinite(value) && Math.abs(value) <= MAX_ABS_COORDINATE;
 }
 
 function quantizeVelocity(value: number): number {
@@ -792,18 +937,19 @@ function quantizeDuration(seconds: number): number {
 
 function packStats(stats: ShipStats): number {
   for (const name of STAT_NAMES) {
-    if (!Number.isInteger(stats[name]) || stats[name] < 0 || stats[name] > 3)
+    if (!Number.isInteger(stats[name]) || stats[name] < 0 || stats[name] > 7)
       throw new Error("Invalid ship stats");
   }
-  return stats.weapon | (stats.engine << 2) | (stats.hull << 4) | (stats.mining << 6);
+  return stats.weapon | (stats.engine << 3) | (stats.hull << 6) | (stats.mining << 9);
 }
 
 function unpackStats(value: number): ShipStats | undefined {
+  if ((value & ~4095) !== 0) return undefined;
   return {
-    weapon: value & 3,
-    engine: (value >>> 2) & 3,
-    hull: (value >>> 4) & 3,
-    mining: (value >>> 6) & 3,
+    weapon: value & 7,
+    engine: (value >>> 3) & 7,
+    hull: (value >>> 6) & 7,
+    mining: (value >>> 9) & 7,
   };
 }
 
@@ -861,7 +1007,7 @@ export function runProtocolSelfTest(): void {
     aimY: 0,
     fire: false,
   };
-  const golden = [1, 1, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const golden = [7, 1, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   const inputBytes = encodeInput(input);
   if (!golden.every((value, index) => inputBytes[index] === value) || !decodeInput(inputBytes))
     throw new Error("Input protocol golden vector failed");
@@ -884,8 +1030,12 @@ export function runProtocolSelfTest(): void {
       maxHp: 150,
       cargo: 20,
       bank: 40,
-      shipClass: SHIP_CLASSES[index % SHIP_CLASSES.length],
-      stats: { weapon: 3, engine: 3, hull: 3, mining: 3 },
+      research: 1500,
+      shipClass:
+        index === MAX_SNAPSHOT_SHIPS - 1
+          ? SHIP_CLASSES[SHIP_CLASSES.length - 1]
+          : SHIP_CLASSES[index % SHIP_CLASSES.length],
+      stats: { weapon: 7, engine: 7, hull: 7, mining: 7 },
       docked: false,
       alive: true,
       respawnIn: 0,
@@ -898,6 +1048,8 @@ export function runProtocolSelfTest(): void {
       id: index + 1,
       x: WORLD_WIDTH,
       y: WORLD_HEIGHT,
+      vx: 72,
+      vy: -72,
       radius: 60,
       hp: 120,
       maxHp: 120,
@@ -906,7 +1058,13 @@ export function runProtocolSelfTest(): void {
   );
   const salvage = Array.from(
     { length: MAX_SNAPSHOT_SALVAGE },
-    (_, index): SalvageView => ({ id: index + 100, x: WORLD_WIDTH, y: WORLD_HEIGHT, value: 5 }),
+    (_, index): SalvageView => ({
+      id: index + 100,
+      x: WORLD_WIDTH,
+      y: WORLD_HEIGHT,
+      value: 5,
+      team: index % 2 === 0 ? "cyan" : "magenta",
+    }),
   );
   const projectiles = Array.from(
     { length: MAX_SNAPSHOT_PROJECTILES },
@@ -940,24 +1098,62 @@ export function runProtocolSelfTest(): void {
     resetIn: 0,
   };
   const snapshotBytes = encodeSnapshot(snapshot);
-  if (snapshotBytes.byteLength > DATAGRAM_BUDGET_BYTES || !decodeSnapshot(snapshotBytes, names))
+  const decodedSnapshot = decodeSnapshot(snapshotBytes, names);
+  const apexShip = decodedSnapshot?.ships[MAX_SNAPSHOT_SHIPS - 1];
+  if (
+    snapshotBytes.byteLength > DATAGRAM_BUDGET_BYTES ||
+    apexShip?.shipClass !== "streak" ||
+    apexShip.research !== 1500 ||
+    apexShip.stats.weapon !== 7
+  )
     throw new Error("Worst-case snapshot protocol failed");
   if (decodeSnapshot(new Uint8Array([...snapshotBytes, 0]), names))
     throw new Error("Trailing snapshot garbage accepted");
+  const fullSalvagePacket = encodeSalvageSnapshot({
+    type: "salvageSnapshot",
+    sequence: 9,
+    salvage: Array.from({ length: MAX_SALVAGE_PACKET_ITEMS }, (_, index) => ({
+      id: index + 300,
+      x: WORLD_WIDTH,
+      y: WORLD_HEIGHT,
+      value: 7,
+      team: index % 2 === 0 ? "cyan" : "magenta",
+    })),
+  });
+  const decodedSalvagePacket = decodeSalvageSnapshot(fullSalvagePacket);
+  if (
+    fullSalvagePacket.byteLength > DATAGRAM_BUDGET_BYTES ||
+    decodedSalvagePacket?.salvage.length !== MAX_SALVAGE_PACKET_ITEMS ||
+    decodedSalvagePacket.salvage[0]?.team !== "cyan" ||
+    decodeSalvageSnapshot(new Uint8Array([...fullSalvagePacket, 0]))
+  ) {
+    throw new Error("Salvage packet protocol failed");
+  }
   const identities = encodeIdentities([{ id: 1, name: "Pilot" }]);
   if (decodeIdentities(identities)?.identities[0]?.name !== "Pilot")
     throw new Error("Identity round trip failed");
   const event = encodeEvent({ type: "event", text: "Ready", tone: "good" });
   if (decodeEvent(event)?.text !== "Ready") throw new Error("Event round trip failed");
-  const action = encodeAction({ type: "action", action: "upgradeClass", value: "needle" });
-  if (decodeAction(action)?.action !== "upgradeClass") throw new Error("Action round trip failed");
+  const action = encodeAction({ type: "action", action: "upgradeClass", value: "comet" });
+  const decodedAction = decodeAction(action);
+  if (decodedAction?.action !== "upgradeClass" || decodedAction.value !== "comet") {
+    throw new Error("Action round trip failed");
+  }
+  for (const shipClass of SHIP_CLASSES) {
+    const decodedClass = decodeAction(
+      encodeAction({ type: "action", action: "upgradeClass", value: shipClass }),
+    );
+    if (decodedClass?.action !== "upgradeClass" || decodedClass.value !== shipClass) {
+      throw new Error(`Class action round trip failed for ${shipClass}`);
+    }
+  }
   const effect = encodeEffect({
     type: "effect",
     id: 1,
-    kind: "asteroidHit",
+    kind: "pickup",
     x: 10,
     y: 20,
     intensity: 1,
   });
-  if (decodeEffect(effect)?.kind !== "asteroidHit") throw new Error("Effect round trip failed");
+  if (decodeEffect(effect)?.kind !== "pickup") throw new Error("Effect round trip failed");
 }
