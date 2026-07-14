@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/@snack-game/cli/snack.schema.json",
+  "version": 1,
+  "assets": {
+    "directory": "assets"
+  },
+  "server": {
+    "entry": "src/server.ts"
+  },
+  "client": {
+    "entry": "src/client.ts"
+  },
+  "game": {
+    "titleImage": "snack.svg",
+    "maxPlayers": {
+      "lowerLimit": 1,
+      "upperLimit": 16,
+      "default": 16
+    },
+    "name": "Startrace",
+    "visibility": "private"
+  }
+}
