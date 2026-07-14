@@ -1,5 +1,5 @@
-export const WORLD_WIDTH = 5200;
-export const WORLD_HEIGHT = 3200;
+export const WORLD_WIDTH = 3200;
+export const WORLD_HEIGHT = 2000;
 
 export type Team = "cyan" | "magenta";
 export type ShipClass = "scout" | "needle" | "hive" | "star" | "chevron";
@@ -157,6 +157,7 @@ export interface ProjectileView {
 
 export interface SnapshotMessage {
   type: "snapshot";
+  sequence: number;
   selfId: string;
   serverTime: number;
   ships: ShipView[];
@@ -177,6 +178,7 @@ export interface EventMessage {
 
 export interface EffectMessage {
   type: "effect";
+  id: number;
   kind: "asteroidHit" | "asteroidBreak" | "shipHit" | "shipBreak" | "baseHit" | "dashHit";
   x: number;
   y: number;

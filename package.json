@@ -17,9 +17,6 @@
     "deploy": "vite build && snack deploy",
     "publish": "vite build && snack publish"
   },
-  "dependencies": {
-    "pixi.js": "^8.19.0"
-  },
   "devDependencies": {
     "@snack-game/cli": "latest",
     "@typescript/native-preview": "7.0.0-dev.20260513.1",

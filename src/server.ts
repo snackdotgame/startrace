@@ -1,4 +1,4 @@
-import { server, type Connection, type NetworkMessage } from "snack:server";
+import { server, type Connection } from "snack:server";
 import {
   CLASS_COST,
   MAX_STAT_LEVEL,
@@ -10,7 +10,6 @@ import {
   type AsteroidView,
   type EventMessage,
   type EffectMessage,
-  type InputMessage,
   type MothershipView,
   type ProjectileKind,
   type ProjectileView,
@@ -22,11 +21,25 @@ import {
   type StatName,
   type Team,
 } from "./shared/messages.js";
+import {
+  DATAGRAM_BUDGET_BYTES,
+  MAX_SNAPSHOT_ASTEROIDS,
+  MAX_SNAPSHOT_PROJECTILES,
+  MAX_SNAPSHOT_SALVAGE,
+  MAX_SNAPSHOT_SHIPS,
+  decodeAction,
+  decodeInput,
+  encodeEffect,
+  encodeEvent,
+  encodeIdentities,
+  encodeSnapshot,
+} from "./shared/protocol.js";
 
-const TICK_MS = 16;
+const FIXED_STEP_MS = 1000 / 60;
+const MAX_CATCH_UP_STEPS = 3;
 const SNAPSHOT_MS = 33;
-const ASTEROID_COUNT = 68;
-const INTEREST_RADIUS = 1650;
+const ASTEROID_COUNT = 44;
+const INTEREST_RADIUS = 1100;
 const MAX_PROJECTILES = 180;
 const MAX_SALVAGE = 90;
 const PORT_Y = [-220, 0, 220];
@@ -41,7 +54,9 @@ interface ControlState {
 }
 
 interface PlayerState extends ShipView {
+  wireId: number;
   input: ControlState;
+  lastInputAt: number;
   nextFireAt: number;
   respawnAt: number;
   dockedPort: number;
@@ -98,49 +113,78 @@ let asteroids: AsteroidState[] = [];
 let salvage: SalvageState[] = [];
 let projectiles: ProjectileState[] = [];
 let nextEntityId = 1;
+let nextEffectId = 1;
+let nextPlayerWireId = 1;
+let nextSnapshotSequence = 1;
 let winner: Team | null = null;
 let resetAt = 0;
 
 export async function main(): Promise<void> {
   resetRound(0);
-  let lastTick = server.elapsedMs();
+  let nextTick = server.elapsedMs();
   let lastSnapshot = 0;
 
   while (server.running) {
     const now = server.elapsedMs();
-    const dt = Math.min(0.05, Math.max(0.001, (now - lastTick) / 1000));
-    lastTick = now;
 
     syncConnections(now);
     for (const event of server.datagrams.drain()) {
-      handleMessage(event.connection, event.json<unknown>(), now);
+      const player = players.get(event.connection.id);
+      const input = decodeInput(event.bytes);
+      if (player && input && input.sequence >= player.input.sequence) {
+        player.input = input;
+        player.lastInputAt = now;
+      }
+    }
+    for (const event of server.streams.drain()) {
+      const player = players.get(event.connection.id);
+      const action = decodeAction(event.bytes);
+      if (player && action) handleAction(player, action, now);
     }
 
-    update(dt, now);
+    let catchUpSteps = 0;
+    while (now >= nextTick && catchUpSteps < MAX_CATCH_UP_STEPS) {
+      update(FIXED_STEP_MS / 1000, nextTick);
+      nextTick += FIXED_STEP_MS;
+      catchUpSteps += 1;
+    }
+    if (now >= nextTick) nextTick = now + FIXED_STEP_MS;
     if (now - lastSnapshot >= SNAPSHOT_MS) {
       sendSnapshots(now);
       lastSnapshot = now;
     }
 
-    await server.sleep(TICK_MS);
+    await server.sleep(Math.max(1, nextTick - server.elapsedMs()));
   }
 }
 
 function syncConnections(now: number): void {
   const live = new Set(server.connections.map((connection) => connection.id));
+  let rosterChanged = false;
   for (const id of players.keys()) {
     if (!live.has(id)) {
       players.delete(id);
+      rosterChanged = true;
     }
   }
 
   for (const connection of server.connections) {
     if (!players.has(connection.id)) {
       const team = smallerTeam();
-      players.set(connection.id, createPlayer(connection, team, now));
+      const player = createPlayer(connection, team, now);
+      players.set(connection.id, player);
+      server.streams.send(
+        connection.id,
+        encodeIdentities(
+          Array.from(players.values(), ({ wireId, name }) => ({ id: wireId, name })),
+          true,
+        ),
+      );
+      server.streams.broadcast(encodeIdentities([{ id: player.wireId, name: player.name }]));
       sendEvent(connection.id, `Joined ${team.toUpperCase()} team`, "good");
     }
   }
+  if (rosterChanged) broadcastIdentities();
 }
 
 function smallerTeam(): Team {
@@ -156,11 +200,31 @@ function smallerTeam(): Team {
   return cyan <= magenta ? "cyan" : "magenta";
 }
 
+function allocateWireId(): number {
+  const used = new Set(Array.from(players.values(), (player) => player.wireId));
+  for (let attempts = 0; attempts < 0xffff; attempts += 1) {
+    const candidate = nextPlayerWireId;
+    nextPlayerWireId = nextPlayerWireId === 0xffff ? 1 : nextPlayerWireId + 1;
+    if (!used.has(candidate)) return candidate;
+  }
+  throw new Error("Player wire id space exhausted");
+}
+
+function broadcastIdentities(): void {
+  server.streams.broadcast(
+    encodeIdentities(
+      Array.from(players.values(), ({ wireId, name }) => ({ id: wireId, name })),
+      true,
+    ),
+  );
+}
+
 function createPlayer(connection: Connection, team: Team, now: number): PlayerState {
   const spawn = spawnPoint(team);
   const stats = emptyStats();
   return {
     id: connection.id,
+    wireId: allocateWireId(),
     name: connection.userName.slice(0, 24),
     team,
     x: spawn.x,
@@ -187,6 +251,7 @@ function createPlayer(connection: Connection, team: Team, now: number): PlayerSt
       fire: false,
     },
     nextFireAt: now,
+    lastInputAt: now,
     respawnAt: 0,
     dockedPort: 1,
     dashUntil: 0,
@@ -196,72 +261,6 @@ function createPlayer(connection: Connection, team: Team, now: number): PlayerSt
 
 function emptyStats(): ShipStats {
   return { weapon: 0, engine: 0, hull: 0, mining: 0 };
-}
-
-function handleMessage(connection: Connection, message: unknown, now: number): void {
-  const player = players.get(connection.id);
-  if (!player || !isRecord(message) || typeof message.type !== "string") {
-    return;
-  }
-
-  if (message.type === "input") {
-    const input = parseInput(message);
-    if (input && input.sequence >= player.input.sequence) {
-      player.input = input;
-    }
-    return;
-  }
-
-  if (message.type === "action") {
-    const action = parseAction(message);
-    if (action) {
-      handleAction(player, action, now);
-    }
-  }
-}
-
-function parseInput(message: Record<string, unknown>): InputMessage | undefined {
-  if (
-    typeof message.sequence !== "number" ||
-    typeof message.moveX !== "number" ||
-    typeof message.moveY !== "number" ||
-    typeof message.aimX !== "number" ||
-    typeof message.aimY !== "number" ||
-    typeof message.fire !== "boolean" ||
-    !Number.isFinite(message.sequence) ||
-    !Number.isFinite(message.moveX) ||
-    !Number.isFinite(message.moveY) ||
-    !Number.isFinite(message.aimX) ||
-    !Number.isFinite(message.aimY)
-  ) {
-    return undefined;
-  }
-  return {
-    type: "input",
-    sequence: Math.floor(message.sequence),
-    moveX: clamp(message.moveX, -1, 1),
-    moveY: clamp(message.moveY, -1, 1),
-    aimX: clamp(message.aimX, 0, WORLD_WIDTH),
-    aimY: clamp(message.aimY, 0, WORLD_HEIGHT),
-    fire: message.fire,
-  };
-}
-
-function parseAction(message: Record<string, unknown>): ActionMessage | undefined {
-  if (
-    message.action === "dock" ||
-    message.action === "repair" ||
-    message.action === "repairMothership"
-  ) {
-    return { type: "action", action: message.action };
-  }
-  if (message.action === "upgradeClass" && isShipClass(message.value)) {
-    return { type: "action", action: "upgradeClass", value: message.value };
-  }
-  if (message.action === "upgradeStat" && isStatName(message.value)) {
-    return { type: "action", action: "upgradeStat", value: message.value };
-  }
-  return undefined;
 }
 
 function handleAction(player: PlayerState, message: ActionMessage, now: number): void {
@@ -440,6 +439,11 @@ function updatePlayers(dt: number, now: number): void {
     }
 
     const config = CLASS_CONFIG[player.shipClass];
+    if (now - player.lastInputAt > 250) {
+      player.input.moveX = 0;
+      player.input.moveY = 0;
+      player.input.fire = false;
+    }
     const engineMultiplier = 1 + player.stats.engine * 0.12;
     let moveX = player.input.moveX;
     let moveY = player.input.moveY;
@@ -967,7 +971,7 @@ function sendSnapshots(now: number): void {
   const allShips = Array.from(
     players.values(),
     (player): ShipView => ({
-      id: player.id,
+      id: String(player.wireId),
       name: player.name,
       team: player.team,
       x: rounded(player.x),
@@ -1009,7 +1013,7 @@ function sendSnapshots(now: number): void {
   const allProjectiles = projectiles.map(
     (projectile): ProjectileView => ({
       id: projectile.id,
-      ownerId: projectile.ownerId,
+      ownerId: projectileOwnerWireId(projectile.ownerId),
       team: projectile.team,
       x: rounded(projectile.x),
       y: rounded(projectile.y),
@@ -1021,6 +1025,7 @@ function sendSnapshots(now: number): void {
   );
   const snapshotBase = {
     type: "snapshot" as const,
+    sequence: nextSnapshotSequence++,
     serverTime: now,
     motherships: Object.values(motherships).map(
       (base): MothershipView => ({
@@ -1047,30 +1052,83 @@ function sendSnapshots(now: number): void {
       Math.hypot(x - focus.x, y - focus.y) <= radius;
     const snapshot: SnapshotMessage = {
       ...snapshotBase,
-      selfId: connection.id,
-      ships: allShips.filter((ship) => ship.id === connection.id || nearby(ship.x, ship.y)),
-      asteroids: allAsteroids.filter((asteroid) => nearby(asteroid.x, asteroid.y)),
-      salvage: allSalvage.filter((item) => nearby(item.x, item.y)),
-      projectiles: allProjectiles.filter((projectile) =>
-        nearby(projectile.x, projectile.y, INTEREST_RADIUS + 300),
-      ),
+      selfId: String(focus.wireId),
+      ships: allShips
+        .filter((ship) => ship.id === String(focus.wireId) || nearby(ship.x, ship.y))
+        .sort((a, b) =>
+          a.id === String(focus.wireId)
+            ? -1
+            : b.id === String(focus.wireId)
+              ? 1
+              : distanceSquared(a.x, a.y, focus.x, focus.y) -
+                distanceSquared(b.x, b.y, focus.x, focus.y),
+        )
+        .slice(0, MAX_SNAPSHOT_SHIPS),
+      asteroids: allAsteroids
+        .filter((asteroid) => nearby(asteroid.x, asteroid.y))
+        .sort(
+          (a, b) =>
+            distanceSquared(a.x, a.y, focus.x, focus.y) -
+            distanceSquared(b.x, b.y, focus.x, focus.y),
+        )
+        .slice(0, MAX_SNAPSHOT_ASTEROIDS),
+      salvage: allSalvage
+        .filter((item) => nearby(item.x, item.y))
+        .sort(
+          (a, b) =>
+            distanceSquared(a.x, a.y, focus.x, focus.y) -
+            distanceSquared(b.x, b.y, focus.x, focus.y),
+        )
+        .slice(0, MAX_SNAPSHOT_SALVAGE),
+      projectiles: allProjectiles
+        .filter((projectile) => nearby(projectile.x, projectile.y, INTEREST_RADIUS + 300))
+        .sort(
+          (a, b) =>
+            distanceSquared(a.x, a.y, focus.x, focus.y) -
+            distanceSquared(b.x, b.y, focus.x, focus.y),
+        )
+        .slice(0, MAX_SNAPSHOT_PROJECTILES),
     };
-    server.streams.send(connection.id, snapshot as unknown as NetworkMessage);
+    const bytes = encodeSnapshot(snapshot);
+    if (bytes.byteLength > DATAGRAM_BUDGET_BYTES) throw new Error("Snapshot budget regression");
+    server.datagrams.send(connection.id, bytes);
   }
 }
 
 function sendEvent(connectionId: string, text: string, tone: EventMessage["tone"]): void {
   const message: EventMessage = { type: "event", text, tone };
-  server.datagrams.send(connectionId, message as unknown as NetworkMessage);
+  server.streams.send(connectionId, encodeEvent(message));
 }
 
 function broadcastEvent(text: string, tone: EventMessage["tone"]): void {
   const message: EventMessage = { type: "event", text, tone };
-  server.datagrams.broadcast(message as unknown as NetworkMessage);
+  server.streams.broadcast(encodeEvent(message));
 }
 
-function broadcastEffect(message: EffectMessage): void {
-  server.datagrams.broadcast(message as unknown as NetworkMessage);
+function broadcastEffect(message: Omit<EffectMessage, "id">): void {
+  const effect: EffectMessage = { ...message, id: nextEffectId++ };
+  const recipients = server.connections
+    .filter((connection) => {
+      const player = players.get(connection.id);
+      return (
+        player && Math.hypot(player.x - effect.x, player.y - effect.y) <= INTEREST_RADIUS + 400
+      );
+    })
+    .map((connection) => connection.id);
+  if (recipients.length > 0) {
+    server.datagrams.broadcast(encodeEffect(effect), { only: recipients });
+  }
+}
+
+function distanceSquared(ax: number, ay: number, bx: number, by: number): number {
+  const dx = ax - bx;
+  const dy = ay - by;
+  return dx * dx + dy * dy;
+}
+
+function projectileOwnerWireId(ownerId: string): string {
+  const owner = players.get(ownerId);
+  return owner ? String(owner.wireId) : "turret";
 }
 
 function resolveCircleCollision(
@@ -1164,22 +1222,4 @@ function rounded(value: number): number {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isShipClass(value: unknown): value is ShipClass {
-  return (
-    value === "scout" ||
-    value === "needle" ||
-    value === "hive" ||
-    value === "star" ||
-    value === "chevron"
-  );
-}
-
-function isStatName(value: unknown): value is StatName {
-  return value === "weapon" || value === "engine" || value === "hull" || value === "mining";
 }
