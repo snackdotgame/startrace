@@ -165,6 +165,12 @@ let projectilesInitialized = false;
 const seenEffectIds = new Set<number>();
 const effectIdOrder: number[] = [];
 const playerNames = new Map<number, string>();
+const asteroidPaths = new Map<
+  number,
+  { seed: number; x: number; y: number; radius: number; path: Path2D }
+>();
+const shipPaths = new Map<ShipClass, Path2D>();
+const mothershipPaths = new Map<Team, Path2D>();
 const MAX_EFFECT_PARTICLES = 240;
 const MAX_EFFECT_FLASHES = 24;
 
@@ -205,6 +211,10 @@ let nextPerformanceReportAt = 0;
 let maxWorkSinceReport = 0;
 let maxParticlesSinceReport = 0;
 let maxEffectDrawCallsSinceReport = 0;
+let frameGlowCalls = 0;
+let maxGlowCallsSinceReport = 0;
+let frameVisibleEntities = 0;
+let maxVisibleEntitiesSinceReport = 0;
 let touchMove:
   | { id: number; startX: number; startY: number; currentX: number; currentY: number }
   | undefined;
@@ -524,6 +534,8 @@ function render(now: number): void {
   updateCamera();
   const view = getView();
   renderScale = view.scale;
+  frameGlowCalls = 0;
+  frameVisibleEntities = 0;
   context.setTransform(
     dpr * view.scale,
     0,
@@ -536,11 +548,31 @@ function render(now: number): void {
   drawStars();
 
   if (snapshot) {
-    for (const asteroid of snapshot.asteroids) drawAsteroid(asteroid);
-    for (const item of snapshot.salvage) drawSalvage(item.x, item.y, item.value, now);
-    for (const base of snapshot.motherships) drawMothership(base, now);
-    for (const projectile of snapshot.projectiles) drawProjectile(projectile, now);
-    for (const ship of snapshot.ships) drawShip(ship, now);
+    for (const asteroid of snapshot.asteroids) {
+      if (!isWorldVisible(asteroid.x, asteroid.y, asteroid.radius + 30)) continue;
+      frameVisibleEntities += 1;
+      drawAsteroid(asteroid);
+    }
+    for (const item of snapshot.salvage) {
+      if (!isWorldVisible(item.x, item.y, 24)) continue;
+      frameVisibleEntities += 1;
+      drawSalvage(item.x, item.y, item.value, now);
+    }
+    for (const base of snapshot.motherships) {
+      if (!isWorldVisible(base.x, base.y, Math.max(base.width, base.height) / 2 + 50)) continue;
+      frameVisibleEntities += 1;
+      drawMothership(base, now);
+    }
+    for (const projectile of snapshot.projectiles) {
+      if (!isWorldVisible(projectile.x, projectile.y, 80)) continue;
+      frameVisibleEntities += 1;
+      drawProjectile(projectile, now);
+    }
+    for (const ship of snapshot.ships) {
+      if (!isWorldVisible(ship.x, ship.y, 80)) continue;
+      frameVisibleEntities += 1;
+      drawShip(ship, now);
+    }
   }
   drawEffects();
 
@@ -557,6 +589,8 @@ function recordPerformance(frameMs: number, renderMs: number, now: number): void
   performanceSampleCount = Math.min(performanceSampleCount + 1, frameSamples.length);
   maxWorkSinceReport = Math.max(maxWorkSinceReport, renderMs);
   maxParticlesSinceReport = Math.max(maxParticlesSinceReport, particles.length);
+  maxGlowCallsSinceReport = Math.max(maxGlowCallsSinceReport, frameGlowCalls);
+  maxVisibleEntitiesSinceReport = Math.max(maxVisibleEntitiesSinceReport, frameVisibleEntities);
   if (!import.meta.env.DEV || now < nextPerformanceReportAt || performanceSampleCount < 30) return;
   nextPerformanceReportAt = now + 500;
   const frames = Array.from(frameSamples.slice(0, performanceSampleCount)).sort((a, b) => a - b);
@@ -579,12 +613,16 @@ function recordPerformance(frameMs: number, renderMs: number, now: number): void
     `particles=${particles.length}`,
     `effect-peak=${maxParticlesSinceReport}`,
     `effect-draws=${maxEffectDrawCallsSinceReport}`,
+    `glows=${maxGlowCallsSinceReport}`,
+    `visible=${maxVisibleEntitiesSinceReport}`,
     `protocol=binary-v1`,
     `snapshot=${lastSnapshotBytes}B`,
   ].join(" ");
   maxWorkSinceReport = 0;
   maxParticlesSinceReport = particles.length;
   maxEffectDrawCallsSinceReport = 0;
+  maxGlowCallsSinceReport = 0;
+  maxVisibleEntitiesSinceReport = 0;
 }
 
 function bindInputSurface(surface: HTMLCanvasElement): void {
@@ -775,8 +813,8 @@ function updateCamera(): void {
   const display = predictedSelf ?? displayShips.get(self.id);
   const targetX = display?.x ?? self.x;
   const targetY = display?.y ?? self.y;
-  cameraX += (targetX - cameraX) * 0.3;
-  cameraY += (targetY - cameraY) * 0.3;
+  cameraX = targetX;
+  cameraY = targetY;
 }
 
 function drawWorldBoundary(): void {
@@ -795,19 +833,30 @@ function drawStars(): void {
 }
 
 function drawAsteroid(asteroid: AsteroidView): void {
-  const path = new Path2D();
-  const random = seeded(asteroid.seed);
-  for (let index = 0; index < 9; index += 1) {
-    const angle = (Math.PI * 2 * index) / 9;
-    const radius = asteroid.radius * (0.78 + random() * 0.26);
-    const x = asteroid.x + Math.cos(angle) * radius;
-    const y = asteroid.y + Math.sin(angle) * radius;
-    if (index === 0) path.moveTo(x, y);
-    else path.lineTo(x, y);
+  let cached = asteroidPaths.get(asteroid.id);
+  if (
+    !cached ||
+    cached.seed !== asteroid.seed ||
+    cached.x !== asteroid.x ||
+    cached.y !== asteroid.y ||
+    cached.radius !== asteroid.radius
+  ) {
+    const path = new Path2D();
+    const random = seeded(asteroid.seed);
+    for (let index = 0; index < 9; index += 1) {
+      const angle = (Math.PI * 2 * index) / 9;
+      const radius = asteroid.radius * (0.78 + random() * 0.26);
+      const x = asteroid.x + Math.cos(angle) * radius;
+      const y = asteroid.y + Math.sin(angle) * radius;
+      if (index === 0) path.moveTo(x, y);
+      else path.lineTo(x, y);
+    }
+    path.closePath();
+    cached = { seed: asteroid.seed, x: asteroid.x, y: asteroid.y, radius: asteroid.radius, path };
+    asteroidPaths.set(asteroid.id, cached);
   }
-  path.closePath();
   const integrity = asteroid.hp / asteroid.maxHp;
-  glowStroke(path, integrity < 0.35 ? "#ff9f43" : "#dfff43", 1.15, 0.65 + integrity * 0.35);
+  glowStroke(cached.path, integrity < 0.35 ? "#ff9f43" : "#dfff43", 1.15, 0.65 + integrity * 0.35);
   glowDot(asteroid.x, asteroid.y, 2.4 + asteroid.radius * 0.035, "#f4ff52");
 }
 
@@ -857,6 +906,8 @@ function drawMothership(base: MothershipView, now: number): void {
 }
 
 function mothershipPath(base: MothershipView): Path2D {
+  const cached = mothershipPaths.get(base.team);
+  if (cached) return cached;
   const path = new Path2D();
   const left = base.x - base.width / 2;
   const right = base.x + base.width / 2;
@@ -887,6 +938,7 @@ function mothershipPath(base: MothershipView): Path2D {
     path.lineTo(right, bottom);
   }
   path.closePath();
+  mothershipPaths.set(base.team, path);
   return path;
 }
 
@@ -971,6 +1023,8 @@ function drawShip(ship: ShipView, now: number): void {
 }
 
 function shipPath(shipClass: ShipClass): Path2D {
+  const cached = shipPaths.get(shipClass);
+  if (cached) return cached;
   const path = new Path2D();
   if (shipClass === "needle") {
     path.moveTo(36, 0);
@@ -1003,6 +1057,7 @@ function shipPath(shipClass: ShipClass): Path2D {
     path.lineTo(-12, 10);
     path.closePath();
   }
+  shipPaths.set(shipClass, path);
   return path;
 }
 
@@ -1037,21 +1092,18 @@ function drawTriangle(
 }
 
 function glowStroke(path: Path2D, color: string, width: number, alpha: number): void {
+  frameGlowCalls += 1;
   context.save();
   context.globalCompositeOperation = "lighter";
   context.lineCap = "round";
   context.lineJoin = "round";
   context.strokeStyle = color;
   context.shadowColor = color;
-  context.shadowBlur = 18;
-  context.globalAlpha = alpha * 0.13;
-  context.lineWidth = 8 / renderScale;
+  context.shadowBlur = 0;
+  context.globalAlpha = alpha * 0.2;
+  context.lineWidth = 5.5 / renderScale;
   context.stroke(path);
-  context.shadowBlur = 10;
-  context.globalAlpha = alpha * 0.38;
-  context.lineWidth = 3.4 / renderScale;
-  context.stroke(path);
-  context.shadowBlur = 4;
+  context.shadowBlur = 3;
   context.globalAlpha = alpha;
   context.lineWidth = width / renderScale;
   context.stroke(path);
@@ -1059,15 +1111,33 @@ function glowStroke(path: Path2D, color: string, width: number, alpha: number): 
 }
 
 function glowDot(x: number, y: number, radius: number, color: string): void {
+  frameGlowCalls += 1;
   context.save();
   context.globalCompositeOperation = "lighter";
   context.fillStyle = color;
   context.shadowColor = color;
-  context.shadowBlur = 16;
+  context.shadowBlur = 0;
+  context.globalAlpha = 0.2;
+  context.beginPath();
+  context.arc(x, y, radius * 2.4, 0, Math.PI * 2);
+  context.fill();
+  context.shadowBlur = 3;
+  context.globalAlpha = 1;
   context.beginPath();
   context.arc(x, y, radius, 0, Math.PI * 2);
   context.fill();
   context.restore();
+}
+
+function isWorldVisible(x: number, y: number, radius: number): boolean {
+  const halfWidth = window.innerWidth / (renderScale * 2) + radius;
+  const halfHeight = window.innerHeight / (renderScale * 2) + radius;
+  return (
+    x >= cameraX - halfWidth &&
+    x <= cameraX + halfWidth &&
+    y >= cameraY - halfHeight &&
+    y <= cameraY + halfHeight
+  );
 }
 
 function spawnImpact(message: EffectMessage): void {
