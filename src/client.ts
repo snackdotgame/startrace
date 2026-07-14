@@ -1098,12 +1098,9 @@ function glowStroke(path: Path2D, color: string, width: number, alpha: number): 
   context.lineCap = "round";
   context.lineJoin = "round";
   context.strokeStyle = color;
-  context.shadowColor = color;
-  context.shadowBlur = 0;
   context.globalAlpha = alpha * 0.2;
   context.lineWidth = 5.5 / renderScale;
   context.stroke(path);
-  context.shadowBlur = 3;
   context.globalAlpha = alpha;
   context.lineWidth = width / renderScale;
   context.stroke(path);
@@ -1115,13 +1112,10 @@ function glowDot(x: number, y: number, radius: number, color: string): void {
   context.save();
   context.globalCompositeOperation = "lighter";
   context.fillStyle = color;
-  context.shadowColor = color;
-  context.shadowBlur = 0;
   context.globalAlpha = 0.2;
   context.beginPath();
   context.arc(x, y, radius * 2.4, 0, Math.PI * 2);
   context.fill();
-  context.shadowBlur = 3;
   context.globalAlpha = 1;
   context.beginPath();
   context.arc(x, y, radius, 0, Math.PI * 2);
@@ -1286,12 +1280,9 @@ function drawEffects(): void {
   context.lineJoin = "round";
   for (const batch of batches.values()) {
     context.strokeStyle = batch.color;
-    context.shadowColor = batch.color;
-    context.shadowBlur = 5;
     context.globalAlpha = batch.alpha * 0.72;
     context.lineWidth = (batch.width * 2.2) / renderScale;
     context.stroke(batch.path);
-    context.shadowBlur = 0;
     context.globalAlpha = batch.alpha;
     context.lineWidth = batch.width / renderScale;
     context.stroke(batch.path);
@@ -1420,8 +1411,6 @@ function drawRadar(dpr: number, screenWidth: number, screenHeight: number): void
   }
   for (const base of snapshot.motherships) {
     context.strokeStyle = TEAM_COLORS[base.team];
-    context.shadowColor = TEAM_COLORS[base.team];
-    context.shadowBlur = 5;
     context.beginPath();
     context.moveTo(mapX(base.x), mapY(base.y - base.height / 2));
     context.lineTo(mapX(base.x), mapY(base.y + base.height / 2));
@@ -1430,8 +1419,6 @@ function drawRadar(dpr: number, screenWidth: number, screenHeight: number): void
   for (const ship of snapshot.ships) {
     if (!ship.alive) continue;
     context.fillStyle = ship.id === snapshot.selfId ? "#ffffff" : TEAM_COLORS[ship.team];
-    context.shadowColor = context.fillStyle;
-    context.shadowBlur = ship.id === snapshot.selfId ? 7 : 3;
     context.beginPath();
     context.arc(
       mapX(ship.x),
@@ -1448,7 +1435,6 @@ function drawRadar(dpr: number, screenWidth: number, screenHeight: number): void
   const view = getView();
   const visibleCenterX = (screenWidth / 2 - view.offsetX) / view.scale;
   const visibleCenterY = (screenHeight / 2 - view.offsetY) / view.scale;
-  context.shadowBlur = 0;
   context.strokeStyle = "#ffffff55";
   context.strokeRect(
     mapX(visibleCenterX - visibleWorldWidth / 2),
