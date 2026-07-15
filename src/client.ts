@@ -86,7 +86,6 @@ root.innerHTML = `
       <div class="dock-title">
         <b>MOTHERSHIP LINK</b>
         <span>FRAME <i id="transform-tier">0</i> / 4 · RESEARCH UNLOCKS FRAMES</span>
-        <button id="dock-collapse" type="button" aria-controls="dock-content" aria-expanded="false">UPGRADES</button>
       </div>
       <div id="dock-content">
         <div id="dock-feedback" role="status" aria-live="polite"></div>
@@ -101,6 +100,9 @@ root.innerHTML = `
           <button data-action="repair"><b>REPAIR SHIP</b><span>RESTORE 32 INTEGRITY</span></button>
           <button data-action="repairMothership"><b>REPAIR MOTHERSHIP</b><span>15 TEAM RESERVE</span></button>
         </div>
+      </div>
+      <div class="dock-footer">
+        <button id="dock-collapse" type="button" aria-controls="dock-content" aria-expanded="false">UPGRADES</button>
       </div>
     </section>
     <div id="touch-guide" aria-hidden="true">
@@ -170,16 +172,15 @@ style.textContent = `
   #rookie-sector-warning.visible { opacity: 1; transform: translate(-50%, 0); }
   #rookie-sector-warning b { display: block; font-size: 14px; text-shadow: 0 0 9px currentColor; }
   #rookie-sector-warning span { display: block; margin-top: 4px; color: #d9e9f2; font-size: 9px; letter-spacing: .12em; }
-  #dock-scrim { display: none; position: absolute; inset: 0; pointer-events: auto; touch-action: none; }
-  body.is-docked.dock-menu-expanded.dock-menu-collapsible #dock-scrim { display: block; }
-  #dock-panel { pointer-events: auto; position: absolute; left: auto; right: max(18px, calc(10px + env(safe-area-inset-right, 0px))); top: calc(76px + env(safe-area-inset-top, 0px)); width: min(540px, calc(100vw - 36px)); max-height: calc(100dvh - 94px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 16px; border: 1px solid #63fff3; background: #020711f2; box-shadow: 0 0 28px #16fff020, inset 0 0 22px #16fff00d; opacity: 0; transform: translateX(20px); transition: opacity .18s, transform .18s; pointer-events: none; }
+  #dock-scrim { display: none; position: absolute; inset: 0; pointer-events: auto; touch-action: none; background: #01020752; }
+  body.dock-menu-mobile.is-docked.dock-menu-expanded.dock-menu-collapsible #dock-scrim { display: block; }
+  #dock-panel { pointer-events: none; position: absolute; top: calc(76px + env(safe-area-inset-top, 0px)); left: auto; right: max(18px, calc(10px + env(safe-area-inset-right, 0px))); width: min(560px, calc(100vw - 64px)); max-height: calc(100dvh - 94px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 18px; border: 1px solid #63fff3; outline: 1px solid #63fff329; outline-offset: 4px; background: linear-gradient(180deg, #03101bfa, #01050df8); box-shadow: 0 0 52px #16fff036, inset 0 0 34px #16fff014; opacity: 0; transform: translateX(24px); transition: opacity .18s, transform .18s; }
   #dock-panel.visible { opacity: 1; transform: translateX(0); pointer-events: auto; }
-  #dock-panel.collapsed { top: auto; bottom: max(18px, calc(10px + env(safe-area-inset-bottom, 0px))); left: auto; right: max(18px, calc(10px + env(safe-area-inset-right, 0px))); width: auto; max-height: none; overflow: hidden; padding: 0; border-color: transparent; background: transparent; box-shadow: none; transform: translateX(20px); }
-  #dock-panel.collapsed.visible { transform: translateX(0); }
-  #dock-panel.collapsed .dock-title { margin: 0; }
-  #dock-panel.collapsed .dock-title > b,
-  #dock-panel.collapsed .dock-title > span,
+  #dock-panel.collapsed { top: 50%; bottom: auto; left: auto; right: max(18px, calc(10px + env(safe-area-inset-right, 0px))); width: auto; max-height: none; overflow: visible; padding: 0; border-color: transparent; outline: 0; background: transparent; box-shadow: none; transform: translate(20px, -50%); }
+  #dock-panel.collapsed.visible { transform: translate(0, -50%); }
+  #dock-panel.collapsed .dock-title,
   #dock-panel.collapsed #dock-content { display: none; }
+  #dock-panel.collapsed .dock-footer { position: static; margin: 0; padding: 0; background: transparent; }
   #dock-panel.collapsed #dock-collapse { border-color: #63fff3; background: #03121de8; box-shadow: 0 0 20px #63fff32b, inset 0 0 14px #63fff312; }
   body.dock-menu-mobile.is-docked.dock-menu-expanded #brand,
   body.dock-menu-mobile.is-docked.dock-menu-expanded #connection,
@@ -191,10 +192,11 @@ style.textContent = `
   body.dock-menu-mobile.is-docked.dock-menu-expanded #rookie-sector-warning,
   body.dock-menu-mobile.is-docked.dock-menu-expanded #touch-guide,
   body.dock-menu-mobile.is-docked.dock-menu-expanded #prompt { visibility: hidden; pointer-events: none; }
-  .dock-title { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 13px; color: #63fff3; }
-  .dock-title b { flex: none; font-size: 16px; text-shadow: 0 0 10px currentColor; }
-  .dock-title span { font-size: 9px; line-height: 1.4; color: #a9bdcc; text-align: right; }
-  #dock-collapse { display: block; min-width: 112px; min-height: 44px; padding: 9px 12px; border-color: #63fff3; color: #63fff3; text-align: center; font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+  .dock-title { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 15px; color: #63fff3; }
+  .dock-title b { flex: none; font-size: 18px; letter-spacing: .12em; text-shadow: 0 0 13px currentColor; }
+  .dock-title span { font-size: 10px; line-height: 1.4; color: #b9cedc; text-align: right; }
+  .dock-footer { position: sticky; z-index: 2; bottom: -18px; margin: 14px -18px -18px; padding: 12px 18px 18px; background: linear-gradient(0deg, #01050d 72%, transparent); }
+  #dock-collapse { display: block; width: 100%; min-width: 136px; min-height: 44px; padding: 9px 14px; border-color: #63fff3; color: #63fff3; text-align: center; font-size: 10px; font-weight: 800; letter-spacing: .12em; }
   #dock-feedback { display: none; margin-bottom: 8px; padding: 9px 12px; border: 1px solid #63fff3; background: #061017ed; color: #63fff3; text-align: center; font-size: 10px; }
   #dock-feedback.show { display: block; }
   #dock-feedback.bad { border-color: #ff5eaa; color: #ff5eaa; }
@@ -240,6 +242,12 @@ style.textContent = `
   #winner span { font-size: 14px; color: #bdcad8; }
   #playtest-state, #performance-state { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   @keyframes touch-guide-pulse { 0%, 100% { opacity: .72; transform: scale(1); } 50% { opacity: 1; transform: scale(1.035); } }
+  @media (max-width: 1199px) {
+    #dock-panel { top: 50%; left: 50%; right: auto; width: min(680px, calc(100vw - 48px)); max-height: calc(100dvh - 48px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); transform: translate(-50%, calc(-50% + 24px)) scale(.98); }
+    #dock-panel.visible { transform: translate(-50%, -50%) scale(1); }
+    #dock-panel.collapsed { top: 50%; left: auto; right: max(14px, calc(10px + env(safe-area-inset-right, 0px))); width: auto; padding: 0; transform: translate(20px, -50%); }
+    #dock-panel.collapsed.visible { transform: translate(0, -50%); }
+  }
   @media (max-width: 760px) {
     #brand { top: calc(12px + env(safe-area-inset-top, 0px)); left: max(48px, calc(10px + env(safe-area-inset-left, 0px))); font-size: 15px; }
     #brand span { font-size: 8px; }
@@ -256,32 +264,26 @@ style.textContent = `
     #deep-space-warning { top: calc(144px + env(safe-area-inset-top, 0px)); min-width: min(260px, calc(100vw - 24px)); padding: 7px 12px; }
     #mothership-range-warning { top: calc(144px + env(safe-area-inset-top, 0px)); min-width: min(330px, calc(100vw - 24px)); padding: 7px 12px; }
     #rookie-sector-warning { top: calc(144px + env(safe-area-inset-top, 0px)); min-width: min(360px, calc(100vw - 24px)); padding: 7px 12px; }
-    #dock-panel { top: 50%; bottom: auto; left: 50%; right: auto; max-height: calc(100dvh - 82px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); transform: translate(-50%, calc(-50% + 20px)); }
-    #dock-panel.visible { transform: translate(-50%, -50%); }
-    body.touch-controls #dock-panel { width: min(58vw, 420px); }
-    .dock-title { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px 10px; }
-    .dock-title > b { grid-column: 1; grid-row: 1; }
-    .dock-title > span { grid-column: 1; grid-row: 2; text-align: left; }
-    #dock-collapse { display: block; grid-column: 2; grid-row: 1 / span 2; }
-    #dock-panel.collapsed { top: auto; bottom: max(10px, calc(8px + env(safe-area-inset-bottom, 0px))); left: 50%; right: auto; width: auto; max-height: none; overflow: hidden; padding: 0; border-color: transparent; background: transparent; box-shadow: none; transform: translate(-50%, 20px); }
-    #dock-panel.collapsed.visible { transform: translate(-50%, 0); }
-    #dock-panel.collapsed .dock-title { margin: 0; }
-    #dock-panel.collapsed .dock-title > b,
-    #dock-panel.collapsed .dock-title > span,
-    #dock-panel.collapsed #dock-content { display: none; }
-    #dock-panel.collapsed #dock-collapse { border-color: #63fff3; background: #03121de8; box-shadow: 0 0 20px #63fff32b, inset 0 0 14px #63fff312; }
+    #dock-panel { top: 50%; left: 50%; right: auto; width: min(620px, calc(100vw - 24px)); max-height: calc(100dvh - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); transform: translate(-50%, calc(-50% + 24px)) scale(.98); }
+    #dock-panel.visible { transform: translate(-50%, -50%) scale(1); }
+    body.touch-controls #dock-panel { width: min(620px, calc(100vw - 24px)); }
+    .dock-title { align-items: flex-start; flex-direction: column; gap: 5px; }
+    .dock-title span { text-align: left; }
+    #dock-panel.collapsed { top: 50%; left: auto; right: max(10px, calc(8px + env(safe-area-inset-right, 0px))); width: auto; padding: 0; transform: translate(20px, -50%); }
+    body.touch-controls #dock-panel.collapsed { width: auto; }
+    #dock-panel.collapsed.visible { transform: translate(0, -50%); }
     .upgrade-row { grid-template-columns: repeat(2, 1fr); }
     .repair-row { grid-template-columns: 1fr; }
     #prompt { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); width: calc(100vw - 20px); font-size: 10px; line-height: 1.4; text-align: center; white-space: normal; }
     body.touch-controls #prompt { display: none; }
   }
   @media (max-width: 520px) {
-    #dock-panel { max-height: calc(100dvh - 152px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+    #dock-panel { max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); padding: 12px; }
     .dock-title { display: flex; align-items: stretch; flex-direction: column; gap: 6px; }
     .dock-title span { text-align: left; }
-    #dock-collapse { width: 100%; min-width: 0; }
-    body.touch-controls #dock-panel { left: 50%; right: auto; width: min(420px, calc(100vw - 16px)); padding: 12px; }
-    body.touch-controls #dock-panel.collapsed { left: 50%; right: auto; width: auto; padding: 0; }
+    .dock-footer { bottom: -12px; margin: 12px -12px -12px; padding: 10px 12px 12px; }
+    body.touch-controls #dock-panel { width: calc(100vw - 16px); }
+    body.touch-controls #dock-panel.collapsed { left: auto; right: max(8px, env(safe-area-inset-right, 0px)); width: auto; padding: 0; }
     body.touch-controls #dock-panel .upgrade-row,
     body.touch-controls #dock-panel .repair-row { grid-template-columns: 1fr; }
     body.touch-controls #pilot-panel { width: 164px; padding: 10px 11px; }
@@ -292,16 +294,10 @@ style.textContent = `
     body.has-center-warning:not(.is-docked) #pilot-panel { top: calc(164px + env(safe-area-inset-top, 0px)); }
     body.has-center-warning #toast { top: calc(118px + env(safe-area-inset-top, 0px)); }
     #base-status { top: calc(12px + env(safe-area-inset-top, 0px)); width: min(520px, 50vw); left: 50%; right: auto; transform: translateX(-50%); }
-    #dock-panel { top: 50%; bottom: auto; left: 50%; right: auto; max-height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); transform: translate(-50%, calc(-50% + 20px)); }
-    #dock-panel.visible { transform: translate(-50%, -50%); }
-    #dock-collapse { display: block; flex: none; }
-    #dock-panel.collapsed { top: auto; bottom: max(8px, calc(8px + env(safe-area-inset-bottom, 0px))); left: 50%; right: auto; width: auto; max-height: none; overflow: hidden; padding: 0; border-color: transparent; background: transparent; box-shadow: none; transform: translate(-50%, 20px); }
-    #dock-panel.collapsed.visible { transform: translate(-50%, 0); }
-    #dock-panel.collapsed .dock-title { margin: 0; }
-    #dock-panel.collapsed .dock-title > b,
-    #dock-panel.collapsed .dock-title > span,
-    #dock-panel.collapsed #dock-content { display: none; }
-    #dock-panel.collapsed #dock-collapse { border-color: #63fff3; background: #03121de8; box-shadow: 0 0 20px #63fff32b, inset 0 0 14px #63fff312; }
+    #dock-panel { top: 50%; left: 50%; right: auto; width: min(680px, calc(100vw - 96px)); max-height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); transform: translate(-50%, calc(-50% + 24px)) scale(.98); }
+    #dock-panel.visible { transform: translate(-50%, -50%) scale(1); }
+    #dock-panel.collapsed { top: 50%; bottom: auto; left: auto; right: max(8px, env(safe-area-inset-right, 0px)); width: auto; padding: 0; transform: translate(20px, -50%); }
+    #dock-panel.collapsed.visible { transform: translate(0, -50%); }
     body.touch-controls #prompt { display: none; }
     #touch-guide span { bottom: max(72px, calc(18% + env(safe-area-inset-bottom, 0px))); }
   }
@@ -413,7 +409,7 @@ let lastPickupSoundAt = -Infinity;
 const turretAngles = new Map<string, number>();
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const mobileDockMedia = window.matchMedia(
-  "(max-width: 760px), (max-height: 560px) and (orientation: landscape)",
+  "(max-width: 1199px), (max-height: 560px) and (orientation: landscape)",
 );
 const touchControlsEnabled = isTouchDevice();
 let dockPanelCollapsed = mobileDockMedia.matches;
@@ -440,6 +436,7 @@ let rookieSectorHintShown = false;
 let upgradeReadyTipShipId = "";
 let upgradeReadyTipShown = false;
 let localShipWasAlive = true;
+let localShipWasDocked = false;
 let touchMove: TouchStick | undefined;
 let touchAim: TouchStick | undefined;
 let touchGuideTimer = 0;
@@ -2904,7 +2901,7 @@ function applyDockPanelState(): void {
   document.body.classList.toggle("dock-menu-mobile", mobileDockMedia.matches);
   document.body.classList.toggle("dock-menu-expanded", !collapsed);
   dockCollapse.hidden = false;
-  dockCollapse.textContent = collapsed ? "UPGRADES" : "CLOSE";
+  dockCollapse.textContent = collapsed ? "UPGRADES" : "CLOSE UPGRADES";
   dockCollapse.setAttribute("aria-expanded", String(!collapsed));
   dockCollapse.setAttribute(
     "aria-label",
@@ -2978,6 +2975,12 @@ function updateHud(message: SnapshotMessage): void {
   required<HTMLElement>("#transform-tier").textContent = String(shipTransformTier(self.shipClass));
   dockPanel.classList.toggle("visible", self.docked);
   document.body.classList.toggle("is-docked", self.docked);
+  dockPanel.setAttribute("aria-hidden", String(!self.docked));
+  if (self.docked && !localShipWasDocked) {
+    dockPanelCollapsed = mobileDockMedia.matches;
+    applyDockPanelState();
+  }
+  localShipWasDocked = self.docked;
   const showRespawnTimer = !self.alive && message.winner === null;
   if (!self.alive && localShipWasAlive) {
     resetInputState();
