@@ -14,6 +14,7 @@ import {
   WORLD_WIDTH,
   classResearchRequirement,
   classUpgradeCost,
+  miningMagnetRadius,
   previousShipClass,
   shipTransformTier,
   statCost,
@@ -78,7 +79,7 @@ root.innerHTML = `
         <button data-action="upgradeStat" data-value="weapon"><b>WEAPON</b><span data-level="weapon">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="weapon">${statCost(0)}</em></button>
         <button data-action="upgradeStat" data-value="engine"><b>ENGINE</b><span data-level="engine">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="engine">${statCost(0)}</em></button>
         <button data-action="upgradeStat" data-value="hull"><b>HULL</b><span data-level="hull">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="hull">${statCost(0)}</em></button>
-        <button data-action="upgradeStat" data-value="mining"><b>MINING</b><span data-level="mining">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="mining">${statCost(0)}</em></button>
+        <button data-action="upgradeStat" data-value="mining" title="INCREASES ASTEROID DAMAGE AND ATTRACTS NEARBY SALVAGE"><b>MINING</b><span data-level="mining">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="mining">${statCost(0)}</em></button>
       </div>
       <div class="repair-row">
         <button data-action="repair"><b>REPAIR SHIP</b><span>RESTORE 32 INTEGRITY</span></button>
@@ -250,6 +251,7 @@ const playerNames = new Map<number, string>();
 const asteroidPaths = new Map<number, { seed: number; radius: number; path: Path2D }>();
 const shipPaths = new Map<ShipClass, Path2D>();
 const mothershipPaths = new Map<Team, Path2D>();
+const salvageDisplays = new Map<number, SalvageDisplay>();
 const MAX_EFFECT_PARTICLES = 240;
 const MAX_EFFECT_FLASHES = 24;
 const PREDICTION_STEP_SECONDS = 1 / 60;
@@ -267,6 +269,9 @@ const TOUCH_MOVE_SIDE_FRACTION = 0.45;
 const TOUCH_STICK_RADIUS = 58;
 const TOUCH_STICK_DEAD_ZONE = 0.16;
 const TOUCH_GUIDE_TIMEOUT_MS = 12_000;
+const SALVAGE_POSITION_RESPONSE = 20;
+const SALVAGE_MAX_EXTRAPOLATION_SECONDS = 0.12;
+const SHIP_BLOOM_SCALE = 1.22;
 
 let snapshot: SnapshotMessage | undefined;
 let renderedTransformClass: ShipClass | undefined;
@@ -341,6 +346,17 @@ interface TouchStick {
   startY: number;
   currentX: number;
   currentY: number;
+}
+
+interface SalvageDisplay {
+  x: number;
+  y: number;
+  targetX: number;
+  targetY: number;
+  vx: number;
+  vy: number;
+  targetAt: number;
+  sequence: number;
 }
 
 interface Particle {
@@ -454,7 +470,7 @@ async function readDatagrams(): Promise<void> {
         if (message && message.sequence > lastSalvageSequence) {
           lastSalvageSequence = message.sequence;
           lastSalvageBytes = event.bytes.byteLength;
-          visibleSalvage = message.salvage;
+          applySalvageSnapshot(message.salvage, message.sequence);
         }
       } else if (kind === PacketKind.Effect) {
         const message = decodeEffect(event.bytes);
@@ -463,6 +479,37 @@ async function readDatagrams(): Promise<void> {
     }
   } catch {
     await client.closed;
+  }
+}
+
+function applySalvageSnapshot(items: SalvageView[], salvageSequence: number): void {
+  const sampleAt = performance.now();
+  visibleSalvage = items;
+  for (const item of items) {
+    const display = salvageDisplays.get(item.id);
+    if (!display) {
+      salvageDisplays.set(item.id, {
+        x: item.x,
+        y: item.y,
+        targetX: item.x,
+        targetY: item.y,
+        vx: 0,
+        vy: 0,
+        targetAt: sampleAt,
+        sequence: salvageSequence,
+      });
+      continue;
+    }
+    const elapsed = Math.max(0.016, (sampleAt - display.targetAt) / 1000);
+    display.vx = (item.x - display.targetX) / elapsed;
+    display.vy = (item.y - display.targetY) / elapsed;
+    display.targetX = item.x;
+    display.targetY = item.y;
+    display.targetAt = sampleAt;
+    display.sequence = salvageSequence;
+  }
+  for (const [id, display] of salvageDisplays) {
+    if (display.sequence !== salvageSequence) salvageDisplays.delete(id);
   }
 }
 
@@ -795,9 +842,10 @@ function render(now: number): void {
       drawAsteroid(asteroid);
     }
     for (const item of visibleSalvage) {
-      if (!isWorldVisible(item.x, item.y, 24)) continue;
+      const position = smoothSalvagePosition(item, now, frameSeconds);
+      if (!isWorldVisible(position.x, position.y, 24)) continue;
       frameVisibleEntities += 1;
-      drawSalvage(item.x, item.y, item.value, item.team, now);
+      drawSalvage(position.x, position.y, item.value, item.team, now);
     }
     for (const base of snapshot.motherships) {
       if (!isWorldVisible(base.x, base.y, Math.max(base.width, base.height) / 2 + 50)) continue;
@@ -822,6 +870,25 @@ function render(now: number): void {
   drawDeepSpaceGuide(dpr, width, height, now);
   recordPerformance(frameMs, performance.now() - renderStartedAt, now);
   requestAnimationFrame(render);
+}
+
+function smoothSalvagePosition(
+  item: SalvageView,
+  now: number,
+  frameSeconds: number,
+): { x: number; y: number } {
+  const display = salvageDisplays.get(item.id);
+  if (!display) return item;
+  const extrapolation = Math.min(
+    SALVAGE_MAX_EXTRAPOLATION_SECONDS,
+    Math.max(0, (now - display.targetAt) / 1000),
+  );
+  const targetX = display.targetX + display.vx * extrapolation;
+  const targetY = display.targetY + display.vy * extrapolation;
+  const blend = 1 - Math.exp(-SALVAGE_POSITION_RESPONSE * frameSeconds);
+  display.x += (targetX - display.x) * blend;
+  display.y += (targetY - display.y) * blend;
+  return display;
 }
 
 function recordPerformance(frameMs: number, renderMs: number, now: number): void {
@@ -1441,16 +1508,6 @@ function drawMothership(base: MothershipView, now: number): void {
     barrel.lineTo(cannonX + Math.cos(angle) * 18, cannonY + Math.sin(angle) * 18);
     glowStroke(barrel, color, 1.1, 0.72);
   }
-
-  for (const offset of [-base.width * 0.28, 0, base.width * 0.28]) {
-    const path = new Path2D();
-    path.moveTo(base.x + offset, base.y + base.height / 2 + 8);
-    path.lineTo(
-      base.x + offset,
-      base.y + base.height / 2 + 38 + Math.sin(now * 0.012 + offset) * 6,
-    );
-    glowStroke(path, color, 1.35, 0.9);
-  }
 }
 
 function mothershipPath(base: MothershipView): Path2D {
@@ -1559,7 +1616,13 @@ function drawShip(ship: ShipView, now: number, frameSeconds: number): void {
   context.translate(display.x, display.y);
   context.rotate(display.angle);
   const path = shipPath(ship.shipClass);
-  glowStroke(path, color, ship.id === snapshot?.selfId ? 1.75 : 1.3, ship.dashing ? 1 : 0.92);
+  glowStroke(
+    path,
+    color,
+    ship.id === snapshot?.selfId ? 1.75 : 1.3,
+    ship.dashing ? 1 : 0.92,
+    SHIP_BLOOM_SCALE,
+  );
   if (shipTransformTier(ship.shipClass) === 4) {
     const shieldRadius = physics.radius + 11 + Math.sin(now * 0.004 + Number(ship.id)) * 1.5;
     const shield = new Path2D();
@@ -1768,15 +1831,21 @@ function drawTriangle(
   context.restore();
 }
 
-function glowStroke(path: Path2D, color: string, width: number, alpha: number): void {
+function glowStroke(
+  path: Path2D,
+  color: string,
+  width: number,
+  alpha: number,
+  bloomScale = 1,
+): void {
   frameGlowCalls += 1;
   context.save();
   context.globalCompositeOperation = "lighter";
   context.lineCap = "round";
   context.lineJoin = "round";
   context.strokeStyle = color;
-  context.globalAlpha = alpha * 0.2;
-  context.lineWidth = 5.5 / renderScale;
+  context.globalAlpha = alpha * 0.2 * bloomScale;
+  context.lineWidth = (5.5 * bloomScale) / renderScale;
   context.stroke(path);
   context.globalAlpha = alpha;
   context.lineWidth = width / renderScale;
@@ -2435,8 +2504,15 @@ function updateHud(message: SnapshotMessage): void {
   required<HTMLElement>("#pilot-class").style.color = TEAM_COLORS[self.team];
   const pilotAbility = required<HTMLElement>("#pilot-ability");
   const apexFrame = shipTransformTier(self.shipClass) === 4;
-  pilotAbility.textContent = apexFrame ? "APEX SIEGE SCREEN · TURRET RESIST" : "";
-  pilotAbility.classList.toggle("visible", apexFrame);
+  const magnetRange = miningMagnetRadius(self.stats.mining);
+  pilotAbility.textContent = apexFrame
+    ? magnetRange > 0
+      ? `APEX SIEGE SCREEN · MAGNET ${magnetRange} · PULL ${self.stats.mining}/${MAX_STAT_LEVEL}`
+      : "APEX SIEGE SCREEN · TURRET RESIST"
+    : magnetRange > 0
+      ? `SALVAGE MAGNET · ${magnetRange} RANGE · PULL ${self.stats.mining}/${MAX_STAT_LEVEL}`
+      : "";
+  pilotAbility.classList.toggle("visible", apexFrame || magnetRange > 0);
   required<HTMLElement>("#pilot-health").textContent =
     `${Math.max(0, Math.ceil(self.hp))} / ${Math.ceil(self.maxHp)}`;
   required<HTMLElement>("#pilot-cargo").textContent = String(self.cargo);
@@ -2500,6 +2576,7 @@ function updateHud(message: SnapshotMessage): void {
       `cargo=${self.cargo}`,
       `bank=${self.bank}`,
       `research=${self.research}`,
+      `mining=${self.stats.mining}`,
       `ships=${message.ships.length}`,
       `asteroids=${message.asteroids.length}`,
       `projectiles=${message.projectiles.length}`,

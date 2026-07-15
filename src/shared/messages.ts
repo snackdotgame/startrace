@@ -631,7 +631,42 @@ export const STAT_BONUSES = {
   hullPerLevel: 0.05,
   miningDamagePerLevel: 0.06,
   miningRadiusPerLevel: 4,
+  miningMagnetBaseRadius: 115,
+  miningMagnetRadiusPerLevel: 45,
+  miningMagnetMinimumSpeed: 200,
+  miningMagnetMaximumSpeed: 440,
+  miningMagnetMinimumVelocityInheritance: 0.08,
+  miningMagnetMaximumVelocityInheritance: 0.4,
+  miningMagnetMinimumResponse: 1.5,
+  miningMagnetMaximumResponse: 5.8,
 } as const;
+
+export function miningMagnetRadius(level: number): number {
+  if (level <= 0) return 0;
+  return STAT_BONUSES.miningMagnetBaseRadius + level * STAT_BONUSES.miningMagnetRadiusPerLevel;
+}
+
+export function miningMagnetPull(level: number): {
+  speed: number;
+  velocityInheritance: number;
+  response: number;
+} {
+  const progress = Math.max(0, Math.min(1, (level - 1) / (MAX_STAT_LEVEL - 1)));
+  return {
+    speed:
+      STAT_BONUSES.miningMagnetMinimumSpeed +
+      (STAT_BONUSES.miningMagnetMaximumSpeed - STAT_BONUSES.miningMagnetMinimumSpeed) * progress,
+    velocityInheritance:
+      STAT_BONUSES.miningMagnetMinimumVelocityInheritance +
+      (STAT_BONUSES.miningMagnetMaximumVelocityInheritance -
+        STAT_BONUSES.miningMagnetMinimumVelocityInheritance) *
+        progress,
+    response:
+      STAT_BONUSES.miningMagnetMinimumResponse +
+      (STAT_BONUSES.miningMagnetMaximumResponse - STAT_BONUSES.miningMagnetMinimumResponse) *
+        progress,
+  };
+}
 
 export function statCost(level: number): number {
   return 55 + level * 22;

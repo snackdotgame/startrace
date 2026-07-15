@@ -15,6 +15,8 @@ import {
   WORLD_WIDTH,
   classResearchRequirement,
   classUpgradeCost,
+  miningMagnetPull,
+  miningMagnetRadius,
   previousShipClass,
   shipTransformTier,
   statCost,
@@ -934,12 +936,45 @@ function shatterAsteroid(asteroid: AsteroidState): void {
 
 function updateSalvage(dt: number): void {
   for (const item of salvage) {
+    const magnet = nearestSalvageMagnet(item);
+    if (magnet) {
+      const dx = magnet.x - item.x;
+      const dy = magnet.y - item.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance > 0) {
+        const level = magnet.stats.mining;
+        const pull = miningMagnetPull(level);
+        const desiredVx = magnet.vx * pull.velocityInheritance + (dx / distance) * pull.speed;
+        const desiredVy = magnet.vy * pull.velocityInheritance + (dy / distance) * pull.speed;
+        const response = 1 - Math.exp(-pull.response * dt);
+        item.vx += (desiredVx - item.vx) * response;
+        item.vy += (desiredVy - item.vy) * response;
+      }
+    }
     item.x += item.vx * dt;
     item.y += item.vy * dt;
-    const drag = Math.exp(-1.8 * dt);
+    const drag = Math.exp(-(magnet ? 0.35 : 1.8) * dt);
     item.vx *= drag;
     item.vy *= drag;
   }
+}
+
+function nearestSalvageMagnet(item: SalvageState): PlayerState | undefined {
+  let nearest: PlayerState | undefined;
+  let nearestDistanceSquared = Infinity;
+  for (const player of players.values()) {
+    if (!player.alive || player.docked || player.stats.mining <= 0) continue;
+    const radius = miningMagnetRadius(player.stats.mining);
+    const candidateDistanceSquared = distanceSquared(item.x, item.y, player.x, player.y);
+    if (
+      candidateDistanceSquared <= radius * radius &&
+      candidateDistanceSquared < nearestDistanceSquared
+    ) {
+      nearest = player;
+      nearestDistanceSquared = candidateDistanceSquared;
+    }
+  }
+  return nearest;
 }
 
 function applyDashDamage(player: PlayerState, now: number): void {
@@ -1431,6 +1466,19 @@ function roundedTeamValues(values: Record<Team, number>): Record<Team, number> {
 }
 
 function validateBalanceTuning(): void {
+  const minimumMagnetPull = miningMagnetPull(1);
+  const maximumMagnetPull = miningMagnetPull(MAX_STAT_LEVEL);
+  if (
+    miningMagnetRadius(0) !== 0 ||
+    miningMagnetRadius(1) < 140 ||
+    miningMagnetRadius(MAX_STAT_LEVEL) < 400 ||
+    minimumMagnetPull.speed >= maximumMagnetPull.speed ||
+    maximumMagnetPull.speed !== 440 ||
+    Math.abs(maximumMagnetPull.response - 5.8) > 0.0001 ||
+    Math.abs(maximumMagnetPull.velocityInheritance - 0.4) > 0.0001
+  ) {
+    throw new Error("Mining magnet progression regression");
+  }
   const testScout: Pick<PlayerState, "shipClass" | "maxHp"> = {
     shipClass: "scout",
     maxHp: CLASS_CONFIG.scout.maxHp * (1 + MAX_STAT_LEVEL * STAT_BONUSES.hullPerLevel),
