@@ -114,6 +114,25 @@ root.innerHTML = `
       <span>SHIP LOST</span><b id="respawn-countdown">4.0</b><em>RECONSTRUCTING AT MOTHERSHIP</em>
     </div>
     <div id="winner"><b></b><span></span></div>
+    <div id="briefing-overlay" aria-hidden="false">
+      <section id="briefing-dialog" role="dialog" aria-modal="true" aria-labelledby="briefing-title" aria-describedby="briefing-objective">
+        <span class="briefing-eyebrow">TEAM VECTOR EXTRACTION</span>
+        <h1 id="briefing-title">MISSION BRIEFING</h1>
+        <p id="briefing-objective"><b>DESTROY THE ENEMY MOTHERSHIP.</b> Mine asteroids for salvage, return home to bank resources, repair, and transform your ship. Defend your own core while your team pushes across the map.</p>
+        <div class="briefing-controls briefing-desktop" aria-label="Keyboard and mouse controls">
+          <div><b>MOVE</b><span>WASD</span></div>
+          <div><b>AIM + FIRE</b><span>MOUSE</span></div>
+          <div><b>UPGRADE</b><span>FLY INSIDE YOUR MOTHERSHIP</span></div>
+        </div>
+        <div class="briefing-controls briefing-touch" aria-label="Touch controls">
+          <div><b>MOVE</b><span>DRAG LEFT SIDE</span></div>
+          <div><b>AIM + FIRE</b><span>DRAG RIGHT SIDE</span></div>
+          <div><b>UPGRADE</b><span>FLY INSIDE YOUR MOTHERSHIP</span></div>
+        </div>
+        <button id="briefing-dismiss" type="button">BEGIN MISSION</button>
+        <small>PRESS ESC OR TAP OUTSIDE TO DISMISS</small>
+      </section>
+    </div>
     <output id="playtest-state" aria-label="Playtest state"></output>
     <output id="performance-state" aria-label="Performance state"></output>
   </div>
@@ -240,6 +259,23 @@ style.textContent = `
   #winner.visible { opacity: 1; }
   #winner b { font-size: clamp(34px, 6vw, 88px); color: #fff; text-shadow: 0 0 25px currentColor; }
   #winner span { font-size: 14px; color: #bdcad8; }
+  #briefing-overlay { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; padding: max(18px, env(safe-area-inset-top, 0px)) max(18px, env(safe-area-inset-right, 0px)) max(18px, env(safe-area-inset-bottom, 0px)) max(18px, env(safe-area-inset-left, 0px)); pointer-events: auto; touch-action: none; background: radial-gradient(circle at 50% 46%, #06131dcc 0, #010207ed 64%); }
+  #briefing-overlay[hidden] { display: none; }
+  #briefing-dialog { width: min(650px, 100%); max-height: calc(100dvh - 36px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow-y: auto; overscroll-behavior: contain; padding: clamp(22px, 4vw, 36px); border: 1px solid #63fff3; outline: 1px solid #63fff32e; outline-offset: 5px; background: linear-gradient(145deg, #071522fa, #020710fa); box-shadow: 0 0 64px #63fff334, inset 0 0 42px #63fff30f; color: #dffcff; }
+  .briefing-eyebrow { display: block; color: #ff5eaa; font-size: 10px; font-weight: 800; letter-spacing: .22em; }
+  #briefing-title { margin: 8px 0 14px; color: #63fff3; font-size: clamp(25px, 4vw, 40px); line-height: 1; letter-spacing: .12em; text-shadow: 0 0 18px #63fff366; }
+  #briefing-objective { margin: 0; color: #b9cedc; font-size: 12px; line-height: 1.65; letter-spacing: .06em; text-transform: none; }
+  #briefing-objective b { color: #fff; text-transform: uppercase; }
+  .briefing-controls { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 8px; margin: 20px 0 16px; }
+  .briefing-controls div { min-height: 82px; padding: 13px; border: 1px solid #34566b; background: #07111ce8; }
+  .briefing-controls b, .briefing-controls span { display: block; }
+  .briefing-controls b { color: #63fff3; font-size: 10px; letter-spacing: .14em; }
+  .briefing-controls span { margin-top: 8px; color: #fff; font-size: 11px; line-height: 1.35; }
+  .briefing-touch { display: none; }
+  body.touch-controls .briefing-desktop { display: none; }
+  body.touch-controls .briefing-touch { display: grid; }
+  #briefing-dismiss { width: 100%; min-height: 52px; padding: 12px 16px; border-color: #63fff3; background: #08212be8; color: #63fff3; text-align: center; font-size: 12px; font-weight: 800; letter-spacing: .16em; box-shadow: 0 0 20px #63fff31f, inset 0 0 18px #63fff30d; }
+  #briefing-dialog > small { display: block; margin-top: 10px; color: #71899b; font-size: 8px; text-align: center; letter-spacing: .12em; }
   #playtest-state, #performance-state { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   @keyframes touch-guide-pulse { 0%, 100% { opacity: .72; transform: scale(1); } 50% { opacity: 1; transform: scale(1.035); } }
   @media (max-width: 1199px) {
@@ -288,6 +324,11 @@ style.textContent = `
     body.touch-controls #dock-panel .repair-row { grid-template-columns: 1fr; }
     body.touch-controls #pilot-panel { width: 164px; padding: 10px 11px; }
     body.touch-controls:not(.is-docked) #pilot-panel { width: auto; max-width: calc(100vw - 20px); padding: 7px 10px; }
+    #briefing-overlay { padding: max(12px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) max(12px, env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px)); }
+    #briefing-dialog { max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); padding: 20px 17px; }
+    .briefing-controls { grid-template-columns: 1fr; gap: 6px; margin: 16px 0 14px; }
+    .briefing-controls div { min-height: 0; padding: 10px 12px; }
+    .briefing-controls span { margin-top: 4px; }
   }
   @media (max-height: 560px) and (orientation: landscape) {
     #pilot-panel { top: calc(64px + env(safe-area-inset-top, 0px)); }
@@ -302,7 +343,7 @@ style.textContent = `
     #touch-guide span { bottom: max(72px, calc(18% + env(safe-area-inset-bottom, 0px))); }
   }
   @media (prefers-reduced-motion: reduce) {
-    #toast, #deep-space-warning, #mothership-range-warning, #rookie-sector-warning, #dock-panel, #respawn-overlay, #winner, .meter i { transition: none; }
+    #toast, #deep-space-warning, #mothership-range-warning, #rookie-sector-warning, #dock-panel, #respawn-overlay, #winner, #briefing-overlay, .meter i { transition: none; }
     #touch-guide span { animation: none; }
   }
 `;
@@ -328,8 +369,17 @@ const respawnOverlay = required<HTMLElement>("#respawn-overlay");
 const respawnCountdown = required<HTMLElement>("#respawn-countdown");
 const winnerPanel = required<HTMLElement>("#winner");
 const soundToggle = required<HTMLButtonElement>("#sound-toggle");
+const briefingOverlay = required<HTMLElement>("#briefing-overlay");
+const briefingDismiss = required<HTMLButtonElement>("#briefing-dismiss");
 const keys = new Set<string>();
-const displayShips = new Map<string, { x: number; y: number; angle: number }>();
+interface ShipDisplay {
+  x: number;
+  y: number;
+  angle: number;
+}
+
+const displayShips = new Map<string, ShipDisplay>();
+const liveSnapshotShipIds = new Set<string>();
 const particles: Particle[] = [];
 const flashes: Flash[] = [];
 const knownProjectiles = new Set<number>();
@@ -351,6 +401,7 @@ const MAX_PREDICTION_CATCH_UP_STEPS = 4;
 const LOCAL_TURN_RESPONSE = 24;
 const REMOTE_POSITION_RESPONSE = 22;
 const REMOTE_TURN_RESPONSE = 18;
+const REMOTE_POSITION_SNAP_DISTANCE = 320;
 const DEEP_SPACE_MARGIN = 850;
 const CAMERA_SCALE_BY_TIER = [1, 0.89, 0.81, 0.75, 0.71] as const;
 const CAMERA_ZOOM_RESPONSE = 3.5;
@@ -405,6 +456,7 @@ let predictedDashUntil = 0;
 let audioContext: AudioContext | undefined;
 let impactNoise: AudioBuffer | undefined;
 let soundEnabled = true;
+let briefingOpen = true;
 let lastPickupSoundAt = -Infinity;
 const turretAngles = new Map<string, number>();
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -530,6 +582,14 @@ document.addEventListener("visibilitychange", () => {
 bindInputSurface(canvas);
 setupTouchControls();
 applyDockPanelState();
+document.body.classList.add("is-briefing");
+briefingDismiss.addEventListener("click", dismissBriefing);
+briefingOverlay.addEventListener("click", (event) => {
+  if (event.target !== briefingOverlay) return;
+  event.preventDefault();
+  dismissBriefing();
+});
+window.requestAnimationFrame(() => briefingDismiss.focus({ preventScroll: true }));
 mobileDockMedia.addEventListener("change", (event) => {
   dockPanelCollapsed = event.matches;
   applyDockPanelState();
@@ -672,6 +732,7 @@ async function readStreams(): Promise<void> {
 }
 
 function applySnapshot(message: SnapshotMessage): void {
+  pruneShipDisplays(message);
   snapshot = message;
   snapshotReceivedAt = performance.now();
   const self = message.ships.find((ship) => ship.id === message.selfId);
@@ -683,6 +744,16 @@ function applySnapshot(message: SnapshotMessage): void {
     cameraInitialized = true;
   }
   updateHud(message);
+}
+
+function pruneShipDisplays(message: SnapshotMessage): void {
+  liveSnapshotShipIds.clear();
+  for (const ship of message.ships) {
+    if (ship.alive) liveSnapshotShipIds.add(ship.id);
+  }
+  for (const id of displayShips.keys()) {
+    if (!liveSnapshotShipIds.has(id)) displayShips.delete(id);
+  }
 }
 
 function sendInput(): void {
@@ -770,6 +841,37 @@ async function flushActions(): Promise<void> {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
+  if (briefingOpen) {
+    if (event.code === "Escape") {
+      event.preventDefault();
+      dismissBriefing();
+      return;
+    }
+    if (event.code === "Tab") {
+      event.preventDefault();
+      briefingDismiss.focus({ preventScroll: true });
+      return;
+    }
+    if (event.target === briefingDismiss && (event.code === "Enter" || event.code === "Space")) {
+      return;
+    }
+    if (
+      [
+        "Space",
+        "ArrowUp",
+        "ArrowDown",
+        "ArrowLeft",
+        "ArrowRight",
+        "KeyW",
+        "KeyA",
+        "KeyS",
+        "KeyD",
+      ].includes(event.code)
+    ) {
+      event.preventDefault();
+    }
+    return;
+  }
   unlockAudio();
   if (
     event.code === "Escape" &&
@@ -803,6 +905,18 @@ function onKeyDown(event: KeyboardEvent): void {
 function onKeyUp(event: KeyboardEvent): void {
   keys.delete(event.code);
   if (event.code === "Space") sendInput();
+}
+
+function dismissBriefing(): void {
+  if (!briefingOpen) return;
+  briefingOpen = false;
+  briefingOverlay.hidden = true;
+  briefingOverlay.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("is-briefing");
+  briefingDismiss.blur();
+  resetInputState();
+  if (connected) sendInput();
+  unlockAudio();
 }
 
 function touchOverride(): string | null {
@@ -999,9 +1113,11 @@ function render(now: number): void {
       drawProjectile(projectile, now);
     }
     for (const ship of snapshot.ships) {
-      if (!isWorldVisible(ship.x, ship.y, 80)) continue;
+      if (!ship.alive) continue;
+      const display = updateShipDisplay(ship, frameSeconds);
+      if (!isWorldVisible(display.x, display.y, 80)) continue;
       frameVisibleEntities += 1;
-      drawShip(ship, now, frameSeconds);
+      drawShip(ship, display, now);
     }
   }
   drawEffects();
@@ -1784,10 +1900,7 @@ function drawProjectile(projectile: ProjectileView, now: number): void {
   if (projectile.kind === "needle") glowDot(x, y, 2 + Math.sin(now * 0.01), "#ffffff");
 }
 
-function drawShip(ship: ShipView, now: number, frameSeconds: number): void {
-  if (!ship.alive) {
-    return;
-  }
+function updateShipDisplay(ship: ShipView, frameSeconds: number): ShipDisplay {
   let display = displayShips.get(ship.id);
   if (!display) {
     display = { x: ship.x, y: ship.y, angle: ship.angle };
@@ -1801,14 +1914,25 @@ function drawShip(ship: ShipView, now: number, frameSeconds: number): void {
       display.angle + normalizeAngle(predictedSelf.angle - display.angle) * turnBlend,
     );
   } else {
-    const positionBlend = 1 - Math.exp(-REMOTE_POSITION_RESPONSE * frameSeconds);
-    const turnBlend = 1 - Math.exp(-REMOTE_TURN_RESPONSE * frameSeconds);
-    display.x += (ship.x - display.x) * positionBlend;
-    display.y += (ship.y - display.y) * positionBlend;
-    display.angle = normalizeAngle(
-      display.angle + normalizeAngle(ship.angle - display.angle) * turnBlend,
-    );
+    const correctionDistance = Math.hypot(ship.x - display.x, ship.y - display.y);
+    if (correctionDistance > REMOTE_POSITION_SNAP_DISTANCE) {
+      display.x = ship.x;
+      display.y = ship.y;
+      display.angle = ship.angle;
+    } else {
+      const positionBlend = 1 - Math.exp(-REMOTE_POSITION_RESPONSE * frameSeconds);
+      const turnBlend = 1 - Math.exp(-REMOTE_TURN_RESPONSE * frameSeconds);
+      display.x += (ship.x - display.x) * positionBlend;
+      display.y += (ship.y - display.y) * positionBlend;
+      display.angle = normalizeAngle(
+        display.angle + normalizeAngle(ship.angle - display.angle) * turnBlend,
+      );
+    }
   }
+  return display;
+}
+
+function drawShip(ship: ShipView, display: ShipDisplay, now: number): void {
   const color = TEAM_COLORS[ship.team];
   const physics = SHIP_PHYSICS[ship.shipClass];
   const homeBase = snapshot?.motherships.find((base) => base.team === ship.team);
