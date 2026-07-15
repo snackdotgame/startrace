@@ -5,6 +5,9 @@ import {
   MOTHERSHIP_LOCK_ON_MS,
   MOTHERSHIP_PLAYER_TARGET_RANGE,
   MOTHERSHIP_TURRET_MOUNTS,
+  RAM_IMPACT_PROFILES,
+  ROOKIE_PROTECTED_MAX_TIER,
+  ROOKIE_SECTOR_MARGIN,
   SHIP_CLASS_INFO,
   SHIP_PHYSICS,
   SHIP_WEAPONS,
@@ -19,6 +22,7 @@ import {
   shipTransformTier,
   statCost,
   type ActionMessage,
+  type AsteroidKind,
   type AsteroidView,
   type EventMessage,
   type EffectMessage,
@@ -45,6 +49,8 @@ import {
 } from "./shared/protocol.js";
 
 const root = required<HTMLDivElement>("#app");
+const ROOKIE_SECTOR_HINT_MS = 5_000;
+const UPGRADE_READY_TIP_MS = 5_000;
 
 root.innerHTML = `
   <canvas id="game" aria-label="Startrace game field"></canvas>
@@ -53,8 +59,8 @@ root.innerHTML = `
     <div id="connection">CONNECTING TO MOTHERSHIP</div>
     <button id="sound-toggle" type="button">SOUND · ARMED</button>
     <div id="base-status">
-      <div class="base cyan"><b>CYAN CORE</b><div class="meter"><i id="cyan-health"></i></div><em id="cyan-value">—</em></div>
-      <div class="base magenta"><b>MAGENTA CORE</b><div class="meter"><i id="magenta-health"></i></div><em id="magenta-value">—</em></div>
+      <div class="base cyan"><b>CYAN CORE</b><div id="cyan-meter" class="meter" role="progressbar" aria-label="Cyan mothership health" aria-valuemin="0" aria-valuemax="100"><i id="cyan-health"></i></div><em id="cyan-value">—%</em></div>
+      <div class="base magenta"><b>MAGENTA CORE</b><div id="magenta-meter" class="meter" role="progressbar" aria-label="Magenta mothership health" aria-valuemin="0" aria-valuemax="100"><i id="magenta-health"></i></div><em id="magenta-value">—%</em></div>
     </div>
     <section id="pilot-panel">
       <strong id="pilot-class">SCOUT</strong>
@@ -63,7 +69,7 @@ root.innerHTML = `
       <div><span>CARGO</span><b id="pilot-cargo">0</b></div>
       <div><span>BANK</span><b id="pilot-bank">0</b></div>
       <div><span>RESEARCH</span><b id="pilot-research">0</b></div>
-      <div><span>TEAM RESERVE</span><b id="team-bank">0</b></div>
+      <div class="team-reserve"><span>TEAM RESERVE</span><b id="team-bank">0</b></div>
     </section>
     <div id="toast"></div>
     <div id="deep-space-warning" role="status" aria-live="polite" aria-hidden="true" hidden>
@@ -72,18 +78,29 @@ root.innerHTML = `
     <div id="mothership-range-warning" role="status" aria-live="polite" aria-hidden="true" hidden>
       <b>ENEMY MOTHERSHIP RANGE</b><span id="mothership-range-copy">DEFENSE CANNONS TRACKING</span>
     </div>
+    <div id="rookie-sector-warning" role="status" aria-live="polite" aria-hidden="true" hidden>
+      <b>ROOKIE SECTOR</b><span>PVP FIRE SUPPRESSED · MINE · BANK · TRANSFORM</span>
+    </div>
+    <div id="dock-scrim" aria-hidden="true"></div>
     <section id="dock-panel">
-      <div class="dock-title"><b>MOTHERSHIP LINK</b><span>FRAME <i id="transform-tier">0</i> / 4 · RESEARCH UNLOCKS FRAMES</span></div>
-      <div id="transform-row" class="upgrade-row class-row"></div>
-      <div class="upgrade-row stat-row">
-        <button data-action="upgradeStat" data-value="weapon"><b>WEAPON</b><span data-level="weapon">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="weapon">${statCost(0)}</em></button>
-        <button data-action="upgradeStat" data-value="engine"><b>ENGINE</b><span data-level="engine">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="engine">${statCost(0)}</em></button>
-        <button data-action="upgradeStat" data-value="hull"><b>HULL</b><span data-level="hull">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="hull">${statCost(0)}</em></button>
-        <button data-action="upgradeStat" data-value="mining" title="INCREASES ASTEROID DAMAGE AND ATTRACTS NEARBY SALVAGE"><b>MINING</b><span data-level="mining">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="mining">${statCost(0)}</em></button>
+      <div class="dock-title">
+        <b>MOTHERSHIP LINK</b>
+        <span>FRAME <i id="transform-tier">0</i> / 4 · RESEARCH UNLOCKS FRAMES</span>
+        <button id="dock-collapse" type="button" aria-controls="dock-content" aria-expanded="false">UPGRADES</button>
       </div>
-      <div class="repair-row">
-        <button data-action="repair"><b>REPAIR SHIP</b><span>RESTORE 32 INTEGRITY</span></button>
-        <button data-action="repairMothership"><b>REPAIR MOTHERSHIP</b><span>15 TEAM RESERVE</span></button>
+      <div id="dock-content">
+        <div id="dock-feedback" role="status" aria-live="polite"></div>
+        <div id="transform-row" class="upgrade-row class-row"></div>
+        <div class="upgrade-row stat-row">
+          <button data-action="upgradeStat" data-value="weapon"><b>WEAPON</b><span data-level="weapon">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="weapon">${statCost(0)}</em></button>
+          <button data-action="upgradeStat" data-value="engine"><b>ENGINE</b><span data-level="engine">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="engine">${statCost(0)}</em></button>
+          <button data-action="upgradeStat" data-value="hull"><b>HULL</b><span data-level="hull">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="hull">${statCost(0)}</em></button>
+          <button data-action="upgradeStat" data-value="mining" title="INCREASES ASTEROID DAMAGE AND ATTRACTS NEARBY SALVAGE"><b>MINING</b><span data-level="mining">${"○".repeat(MAX_STAT_LEVEL)}</span><em data-cost="mining">${statCost(0)}</em></button>
+        </div>
+        <div class="repair-row">
+          <button data-action="repair"><b>REPAIR SHIP</b><span>RESTORE 32 INTEGRITY</span></button>
+          <button data-action="repairMothership"><b>REPAIR MOTHERSHIP</b><span>15 TEAM RESERVE</span></button>
+        </div>
       </div>
     </section>
     <div id="touch-guide" aria-hidden="true">
@@ -127,10 +144,19 @@ style.textContent = `
   #pilot-ability.visible { display: block; }
   #pilot-panel div { display: flex; justify-content: space-between; padding: 4px 0; color: #a9bdcc; }
   #pilot-panel b { color: #fff; }
-  #toast { position: absolute; top: 104px; left: 50%; min-width: 300px; padding: 10px 18px; transform: translate(-50%, -8px); opacity: 0; text-align: center; font-size: 12px; background: #061017ed; border: 1px solid #63fff3; color: #63fff3; transition: opacity .16s, transform .16s; }
+  body:not(.is-docked) #pilot-panel { display: flex; align-items: center; gap: 13px; width: auto; max-width: calc(100vw - 24px); padding: 7px 10px; border-left: 0; border-bottom: 1px solid #63fff366; background: #020914c7; box-shadow: 0 0 16px #63fff30d; font-size: 8px; opacity: .82; }
+  body:not(.is-docked) #pilot-panel strong,
+  body:not(.is-docked) #pilot-ability,
+  body:not(.is-docked) #pilot-panel .team-reserve { display: none; }
+  body:not(.is-docked) #pilot-panel div { display: grid; min-width: 4ch; gap: 2px; padding: 0; }
+  body:not(.is-docked) #pilot-panel div span { font-size: 7px; letter-spacing: .1em; }
+  body:not(.is-docked) #pilot-panel div b { font-size: 10px; font-variant-numeric: tabular-nums; }
+  #toast { position: absolute; top: 126px; left: 50%; min-width: min(300px, calc(100vw - 24px)); padding: 10px 18px; transform: translate(-50%, -8px); opacity: 0; text-align: center; font-size: 12px; background: #061017ed; border: 1px solid #63fff3; color: #63fff3; transition: opacity .16s, transform .16s, top .16s; }
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
   #toast.bad { border-color: #ff5eaa; color: #ff5eaa; }
   #toast.good { border-color: #ecff45; color: #ecff45; }
+  body.has-center-warning:not(.is-docked) #pilot-panel { top: calc(116px + env(safe-area-inset-top, 0px)); }
+  body.has-center-warning #toast { top: calc(160px + env(safe-area-inset-top, 0px)); }
   #deep-space-warning { position: absolute; top: 62px; left: 50%; min-width: 280px; padding: 8px 18px; transform: translate(-50%, -8px); opacity: 0; text-align: center; border: 1px solid #efff4d; background: #080b03e6; box-shadow: 0 0 22px #efff4d22, inset 0 0 16px #efff4d0d; color: #efff4d; transition: opacity .18s, transform .18s; }
   #deep-space-warning.visible { opacity: 1; transform: translate(-50%, 0); }
   #deep-space-warning b { display: block; font-size: 14px; text-shadow: 0 0 9px currentColor; }
@@ -140,11 +166,39 @@ style.textContent = `
   #mothership-range-warning.locked { border-color: #fff; box-shadow: 0 0 30px #ff5eaa55, inset 0 0 22px #ff5eaa1f; }
   #mothership-range-warning b { display: block; font-size: 14px; text-shadow: 0 0 9px currentColor; }
   #mothership-range-warning span { display: block; margin-top: 4px; color: #ffc0da; font-size: 9px; letter-spacing: .12em; }
-  #dock-panel { pointer-events: auto; position: absolute; right: max(18px, calc(10px + env(safe-area-inset-right, 0px))); top: calc(76px + env(safe-area-inset-top, 0px)); width: min(540px, calc(100vw - 36px)); max-height: calc(100dvh - 94px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 16px; border: 1px solid #63fff3; background: #020711f2; box-shadow: 0 0 28px #16fff020, inset 0 0 22px #16fff00d; opacity: 0; transform: translateX(20px); transition: opacity .18s, transform .18s; pointer-events: none; }
+  #rookie-sector-warning { position: absolute; top: 62px; left: 50%; min-width: 360px; padding: 8px 18px; transform: translate(-50%, -8px); opacity: 0; text-align: center; border: 1px solid currentColor; background: #030b12ed; box-shadow: 0 0 22px currentColor; color: #63fff3; transition: opacity .18s, transform .18s; }
+  #rookie-sector-warning.visible { opacity: 1; transform: translate(-50%, 0); }
+  #rookie-sector-warning b { display: block; font-size: 14px; text-shadow: 0 0 9px currentColor; }
+  #rookie-sector-warning span { display: block; margin-top: 4px; color: #d9e9f2; font-size: 9px; letter-spacing: .12em; }
+  #dock-scrim { display: none; position: absolute; inset: 0; pointer-events: auto; touch-action: none; }
+  body.is-docked.dock-menu-expanded.dock-menu-collapsible #dock-scrim { display: block; }
+  #dock-panel { pointer-events: auto; position: absolute; left: auto; right: max(18px, calc(10px + env(safe-area-inset-right, 0px))); top: calc(76px + env(safe-area-inset-top, 0px)); width: min(540px, calc(100vw - 36px)); max-height: calc(100dvh - 94px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 16px; border: 1px solid #63fff3; background: #020711f2; box-shadow: 0 0 28px #16fff020, inset 0 0 22px #16fff00d; opacity: 0; transform: translateX(20px); transition: opacity .18s, transform .18s; pointer-events: none; }
   #dock-panel.visible { opacity: 1; transform: translateX(0); pointer-events: auto; }
+  #dock-panel.collapsed { top: auto; bottom: max(18px, calc(10px + env(safe-area-inset-bottom, 0px))); left: auto; right: max(18px, calc(10px + env(safe-area-inset-right, 0px))); width: auto; max-height: none; overflow: hidden; padding: 0; border-color: transparent; background: transparent; box-shadow: none; transform: translateX(20px); }
+  #dock-panel.collapsed.visible { transform: translateX(0); }
+  #dock-panel.collapsed .dock-title { margin: 0; }
+  #dock-panel.collapsed .dock-title > b,
+  #dock-panel.collapsed .dock-title > span,
+  #dock-panel.collapsed #dock-content { display: none; }
+  #dock-panel.collapsed #dock-collapse { border-color: #63fff3; background: #03121de8; box-shadow: 0 0 20px #63fff32b, inset 0 0 14px #63fff312; }
+  body.dock-menu-mobile.is-docked.dock-menu-expanded #brand,
+  body.dock-menu-mobile.is-docked.dock-menu-expanded #connection,
+  body.dock-menu-mobile.is-docked.dock-menu-expanded #sound-toggle,
+  body.dock-menu-mobile.is-docked.dock-menu-expanded #base-status,
+  body.dock-menu-mobile.is-docked.dock-menu-expanded #pilot-panel,
+  body.dock-menu-mobile.is-docked.dock-menu-expanded #deep-space-warning,
+  body.dock-menu-mobile.is-docked.dock-menu-expanded #mothership-range-warning,
+  body.dock-menu-mobile.is-docked.dock-menu-expanded #rookie-sector-warning,
+  body.dock-menu-mobile.is-docked.dock-menu-expanded #touch-guide,
+  body.dock-menu-mobile.is-docked.dock-menu-expanded #prompt { visibility: hidden; pointer-events: none; }
   .dock-title { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 13px; color: #63fff3; }
   .dock-title b { flex: none; font-size: 16px; text-shadow: 0 0 10px currentColor; }
   .dock-title span { font-size: 9px; line-height: 1.4; color: #a9bdcc; text-align: right; }
+  #dock-collapse { display: block; min-width: 112px; min-height: 44px; padding: 9px 12px; border-color: #63fff3; color: #63fff3; text-align: center; font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+  #dock-feedback { display: none; margin-bottom: 8px; padding: 9px 12px; border: 1px solid #63fff3; background: #061017ed; color: #63fff3; text-align: center; font-size: 10px; }
+  #dock-feedback.show { display: block; }
+  #dock-feedback.bad { border-color: #ff5eaa; color: #ff5eaa; }
+  #dock-feedback.good { border-color: #ecff45; color: #ecff45; }
   .upgrade-row, .repair-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
   #transform-row { border-top: 1px solid #263849; padding-top: 8px; }
   #transform-row.two-options { grid-template-columns: repeat(2, 1fr); }
@@ -170,9 +224,10 @@ style.textContent = `
   body.touch-controls #touch-guide { display: block; }
   body.touch-controls.touch-move-learned #touch-guide .move,
   body.touch-controls.touch-aim-learned #touch-guide .aim,
-  body.touch-controls.is-docked #touch-guide .aim,
+  body.touch-controls.is-docked #touch-guide,
   body.touch-controls.is-respawning #touch-guide { display: none; }
   #prompt { position: absolute; bottom: calc(17px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); color: #9cafc0; font-size: 10px; white-space: nowrap; }
+  body.is-docked #prompt { display: none; }
   #respawn-overlay { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; text-align: center; opacity: 0; background: radial-gradient(circle at center, #020812b8 0, #0102075c 31%, transparent 58%); transition: opacity .14s; }
   #respawn-overlay[hidden] { display: none; }
   #respawn-overlay.visible { opacity: 1; }
@@ -191,34 +246,67 @@ style.textContent = `
     #connection { display: none; }
     #sound-toggle { top: calc(8px + env(safe-area-inset-top, 0px)); right: max(8px, calc(8px + env(safe-area-inset-right, 0px))); min-width: 44px; min-height: 44px; padding: 8px 10px; }
     #base-status { top: calc(62px + env(safe-area-inset-top, 0px)); left: max(10px, calc(8px + env(safe-area-inset-left, 0px))); right: max(10px, calc(8px + env(safe-area-inset-right, 0px))); width: auto; transform: none; gap: 12px; }
-    .base { font-size: 10px; } .base em { display: none; }
+    .base { font-size: 10px; } .base em { display: block; min-width: 4ch; font-size: 10px; text-align: right; }
     #pilot-panel { top: calc(104px + env(safe-area-inset-top, 0px)); left: max(10px, calc(8px + env(safe-area-inset-left, 0px))); width: 178px; font-size: 10px; }
+    body:not(.is-docked) #pilot-panel { width: auto; max-width: calc(100vw - 20px); }
+    body.has-center-warning:not(.is-docked) #pilot-panel { top: calc(104px + env(safe-area-inset-top, 0px)); }
     #pilot-panel strong { font-size: 14px; }
-    #deep-space-warning { top: calc(108px + env(safe-area-inset-top, 0px)); min-width: min(260px, calc(100vw - 24px)); padding: 7px 12px; }
-    #mothership-range-warning { top: calc(108px + env(safe-area-inset-top, 0px)); min-width: min(330px, calc(100vw - 24px)); padding: 7px 12px; }
-    #dock-panel { top: auto; bottom: max(10px, calc(8px + env(safe-area-inset-bottom, 0px))); max-height: calc(100dvh - 82px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+    #toast { top: calc(144px + env(safe-area-inset-top, 0px)); }
+    body.has-center-warning #toast { top: calc(202px + env(safe-area-inset-top, 0px)); }
+    #deep-space-warning { top: calc(144px + env(safe-area-inset-top, 0px)); min-width: min(260px, calc(100vw - 24px)); padding: 7px 12px; }
+    #mothership-range-warning { top: calc(144px + env(safe-area-inset-top, 0px)); min-width: min(330px, calc(100vw - 24px)); padding: 7px 12px; }
+    #rookie-sector-warning { top: calc(144px + env(safe-area-inset-top, 0px)); min-width: min(360px, calc(100vw - 24px)); padding: 7px 12px; }
+    #dock-panel { top: 50%; bottom: auto; left: 50%; right: auto; max-height: calc(100dvh - 82px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); transform: translate(-50%, calc(-50% + 20px)); }
+    #dock-panel.visible { transform: translate(-50%, -50%); }
     body.touch-controls #dock-panel { width: min(58vw, 420px); }
+    .dock-title { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px 10px; }
+    .dock-title > b { grid-column: 1; grid-row: 1; }
+    .dock-title > span { grid-column: 1; grid-row: 2; text-align: left; }
+    #dock-collapse { display: block; grid-column: 2; grid-row: 1 / span 2; }
+    #dock-panel.collapsed { top: auto; bottom: max(10px, calc(8px + env(safe-area-inset-bottom, 0px))); left: 50%; right: auto; width: auto; max-height: none; overflow: hidden; padding: 0; border-color: transparent; background: transparent; box-shadow: none; transform: translate(-50%, 20px); }
+    #dock-panel.collapsed.visible { transform: translate(-50%, 0); }
+    #dock-panel.collapsed .dock-title { margin: 0; }
+    #dock-panel.collapsed .dock-title > b,
+    #dock-panel.collapsed .dock-title > span,
+    #dock-panel.collapsed #dock-content { display: none; }
+    #dock-panel.collapsed #dock-collapse { border-color: #63fff3; background: #03121de8; box-shadow: 0 0 20px #63fff32b, inset 0 0 14px #63fff312; }
     .upgrade-row { grid-template-columns: repeat(2, 1fr); }
     .repair-row { grid-template-columns: 1fr; }
     #prompt { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); width: calc(100vw - 20px); font-size: 10px; line-height: 1.4; text-align: center; white-space: normal; }
     body.touch-controls #prompt { display: none; }
   }
   @media (max-width: 520px) {
-    .dock-title { align-items: flex-start; flex-direction: column; gap: 6px; }
+    #dock-panel { max-height: calc(100dvh - 152px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+    .dock-title { display: flex; align-items: stretch; flex-direction: column; gap: 6px; }
     .dock-title span { text-align: left; }
-    body.touch-controls #dock-panel { left: max(42vw, calc(126px + env(safe-area-inset-left, 0px))); right: max(8px, calc(8px + env(safe-area-inset-right, 0px))); width: auto; padding: 12px; }
+    #dock-collapse { width: 100%; min-width: 0; }
+    body.touch-controls #dock-panel { left: 50%; right: auto; width: min(420px, calc(100vw - 16px)); padding: 12px; }
+    body.touch-controls #dock-panel.collapsed { left: 50%; right: auto; width: auto; padding: 0; }
     body.touch-controls #dock-panel .upgrade-row,
     body.touch-controls #dock-panel .repair-row { grid-template-columns: 1fr; }
     body.touch-controls #pilot-panel { width: 164px; padding: 10px 11px; }
+    body.touch-controls:not(.is-docked) #pilot-panel { width: auto; max-width: calc(100vw - 20px); padding: 7px 10px; }
   }
   @media (max-height: 560px) and (orientation: landscape) {
     #pilot-panel { top: calc(64px + env(safe-area-inset-top, 0px)); }
+    body.has-center-warning:not(.is-docked) #pilot-panel { top: calc(164px + env(safe-area-inset-top, 0px)); }
+    body.has-center-warning #toast { top: calc(118px + env(safe-area-inset-top, 0px)); }
     #base-status { top: calc(12px + env(safe-area-inset-top, 0px)); width: min(520px, 50vw); left: 50%; right: auto; transform: translateX(-50%); }
-    #dock-panel { top: calc(62px + env(safe-area-inset-top, 0px)); bottom: max(8px, calc(8px + env(safe-area-inset-bottom, 0px))); max-height: none; }
+    #dock-panel { top: 50%; bottom: auto; left: 50%; right: auto; max-height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); transform: translate(-50%, calc(-50% + 20px)); }
+    #dock-panel.visible { transform: translate(-50%, -50%); }
+    #dock-collapse { display: block; flex: none; }
+    #dock-panel.collapsed { top: auto; bottom: max(8px, calc(8px + env(safe-area-inset-bottom, 0px))); left: 50%; right: auto; width: auto; max-height: none; overflow: hidden; padding: 0; border-color: transparent; background: transparent; box-shadow: none; transform: translate(-50%, 20px); }
+    #dock-panel.collapsed.visible { transform: translate(-50%, 0); }
+    #dock-panel.collapsed .dock-title { margin: 0; }
+    #dock-panel.collapsed .dock-title > b,
+    #dock-panel.collapsed .dock-title > span,
+    #dock-panel.collapsed #dock-content { display: none; }
+    #dock-panel.collapsed #dock-collapse { border-color: #63fff3; background: #03121de8; box-shadow: 0 0 20px #63fff32b, inset 0 0 14px #63fff312; }
+    body.touch-controls #prompt { display: none; }
     #touch-guide span { bottom: max(72px, calc(18% + env(safe-area-inset-bottom, 0px))); }
   }
   @media (prefers-reduced-motion: reduce) {
-    #toast, #deep-space-warning, #mothership-range-warning, #dock-panel, #respawn-overlay, #winner, .meter i { transition: none; }
+    #toast, #deep-space-warning, #mothership-range-warning, #rookie-sector-warning, #dock-panel, #respawn-overlay, #winner, .meter i { transition: none; }
     #touch-guide span { animation: none; }
   }
 `;
@@ -229,12 +317,17 @@ const context = requiredContext(canvas);
 let inputSurface: HTMLCanvasElement = canvas;
 
 const connectionLabel = required<HTMLElement>("#connection");
+const dockScrim = required<HTMLElement>("#dock-scrim");
 const dockPanel = required<HTMLElement>("#dock-panel");
+const dockContent = required<HTMLElement>("#dock-content");
+const dockFeedback = required<HTMLElement>("#dock-feedback");
+const dockCollapse = required<HTMLButtonElement>("#dock-collapse");
 const transformRow = required<HTMLElement>("#transform-row");
 const toast = required<HTMLElement>("#toast");
 const deepSpaceWarning = required<HTMLElement>("#deep-space-warning");
 const mothershipRangeWarning = required<HTMLElement>("#mothership-range-warning");
 const mothershipRangeCopy = required<HTMLElement>("#mothership-range-copy");
+const rookieSectorWarning = required<HTMLElement>("#rookie-sector-warning");
 const respawnOverlay = required<HTMLElement>("#respawn-overlay");
 const respawnCountdown = required<HTMLElement>("#respawn-countdown");
 const winnerPanel = required<HTMLElement>("#winner");
@@ -248,7 +341,10 @@ let projectilesInitialized = false;
 const seenEffectIds = new Set<number>();
 const effectIdOrder: number[] = [];
 const playerNames = new Map<number, string>();
-const asteroidPaths = new Map<number, { seed: number; radius: number; path: Path2D }>();
+const asteroidPaths = new Map<
+  number,
+  { seed: number; radius: number; kind: AsteroidKind; path: Path2D }
+>();
 const shipPaths = new Map<ShipClass, Path2D>();
 const mothershipPaths = new Map<Team, Path2D>();
 const salvageDisplays = new Map<number, SalvageDisplay>();
@@ -272,6 +368,15 @@ const TOUCH_GUIDE_TIMEOUT_MS = 12_000;
 const SALVAGE_POSITION_RESPONSE = 20;
 const SALVAGE_MAX_EXTRAPOLATION_SECONDS = 0.12;
 const SHIP_BLOOM_SCALE = 1.22;
+const ASTEROID_STYLES: Record<
+  AsteroidKind,
+  { color: string; vertices: number; jitter: number; dotScale: number }
+> = {
+  rock: { color: "#dfff43", vertices: 9, jitter: 0.26, dotScale: 1 },
+  iron: { color: "#ff9f43", vertices: 8, jitter: 0.18, dotScale: 1.1 },
+  crystal: { color: "#63fff3", vertices: 6, jitter: 0.34, dotScale: 0.85 },
+  core: { color: "#bf7cff", vertices: 10, jitter: 0.12, dotScale: 1.6 },
+};
 
 let snapshot: SnapshotMessage | undefined;
 let renderedTransformClass: ShipClass | undefined;
@@ -307,7 +412,11 @@ let soundEnabled = true;
 let lastPickupSoundAt = -Infinity;
 const turretAngles = new Map<string, number>();
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const mobileDockMedia = window.matchMedia(
+  "(max-width: 760px), (max-height: 560px) and (orientation: landscape)",
+);
 const touchControlsEnabled = isTouchDevice();
+let dockPanelCollapsed = mobileDockMedia.matches;
 let inputSendInFlight = false;
 let queuedInput: Uint8Array | undefined;
 let actionSendInFlight = false;
@@ -326,6 +435,10 @@ let frameVisibleEntities = 0;
 let maxVisibleEntitiesSinceReport = 0;
 let maxPredictionStepsSinceReport = 0;
 let mothershipThreatStartedAt = 0;
+let rookieSectorHintUntil = 0;
+let rookieSectorHintShown = false;
+let upgradeReadyTipShipId = "";
+let upgradeReadyTipShown = false;
 let localShipWasAlive = true;
 let touchMove: TouchStick | undefined;
 let touchAim: TouchStick | undefined;
@@ -380,6 +493,7 @@ interface Flash {
   maxLife: number;
   radius: number;
   color: string;
+  dotScale?: number;
 }
 
 interface EffectBatch {
@@ -394,7 +508,11 @@ if (import.meta.env.DEV) {
   runProtocolSelfTest();
   runDeepSpaceSelfTest();
   runMothershipThreatSelfTest();
+  runRookieSectorSelfTest();
+  runUpgradeReadinessSelfTest();
+  runMothershipUpgradeBaySelfTest();
   runProgressionSelfTest();
+  runBaseBreakEffectSelfTest();
 }
 window.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("resize", resize);
@@ -414,6 +532,11 @@ document.addEventListener("visibilitychange", () => {
 });
 bindInputSurface(canvas);
 setupTouchControls();
+applyDockPanelState();
+mobileDockMedia.addEventListener("change", (event) => {
+  dockPanelCollapsed = event.matches;
+  applyDockPanelState();
+});
 soundToggle.addEventListener("click", () => {
   soundEnabled = !soundEnabled;
   soundToggle.textContent = soundEnabled ? "SOUND · ON" : "SOUND · OFF";
@@ -422,6 +545,21 @@ soundToggle.addEventListener("click", () => {
   } else {
     void audioContext?.suspend();
   }
+});
+
+dockCollapse.addEventListener("click", () => {
+  dockPanelCollapsed = !dockPanelCollapsed;
+  applyDockPanelState();
+});
+
+dockScrim.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+});
+dockScrim.addEventListener("click", () => {
+  if (dockPanelCollapsed) return;
+  dockPanelCollapsed = true;
+  applyDockPanelState();
+  dockCollapse.focus({ preventScroll: true });
 });
 
 dockPanel.addEventListener("click", (event) => {
@@ -526,6 +664,9 @@ async function readStreams(): Promise<void> {
         if (!batch) continue;
         if (batch.replace) playerNames.clear();
         for (const identity of batch.identities) playerNames.set(identity.id, identity.name);
+      } else if (kind === PacketKind.Effect) {
+        const message = decodeEffect(event.bytes);
+        if (message) spawnImpact(message);
       }
     }
   } catch {
@@ -633,6 +774,17 @@ async function flushActions(): Promise<void> {
 
 function onKeyDown(event: KeyboardEvent): void {
   unlockAudio();
+  if (
+    event.code === "Escape" &&
+    document.body.classList.contains("is-docked") &&
+    !dockPanelCollapsed
+  ) {
+    event.preventDefault();
+    dockPanelCollapsed = true;
+    applyDockPanelState();
+    dockCollapse.focus({ preventScroll: true });
+    return;
+  }
   if (import.meta.env.DEV && event.code === "KeyT" && !event.repeat) {
     touchMouseEmulation = !touchMouseEmulation;
     if (touchMouseEmulation) activateTouchControls();
@@ -649,14 +801,6 @@ function onKeyDown(event: KeyboardEvent): void {
     return;
   }
   if (event.code === "KeyR") sendAction("repair");
-  const optionIndex = ["Digit1", "Digit2", "Digit3", "Digit4"].indexOf(event.code);
-  if (optionIndex >= 0 || event.code === "KeyQ" || event.code === "KeyE") {
-    const self = snapshot?.ships.find((ship) => ship.id === snapshot?.selfId);
-    const options = self ? CLASS_UPGRADE_OPTIONS[self.shipClass] : undefined;
-    const index = optionIndex >= 0 ? optionIndex : event.code === "KeyQ" ? 0 : 1;
-    const target = options?.[index];
-    if (target) sendAction("upgradeClass", target);
-  }
 }
 
 function onKeyUp(event: KeyboardEvent): void {
@@ -1328,8 +1472,8 @@ function drawNavigationTraces(
     bounds.top <= centerY + 850
   ) {
     const phase = reducedMotion.matches ? 0 : now * 0.000035;
-    context.strokeStyle = "#a7c8d8";
-    context.globalAlpha = 0.13;
+    context.strokeStyle = ASTEROID_STYLES.core.color;
+    context.globalAlpha = 0.17;
     context.lineWidth = 0.9 / renderScale;
     context.beginPath();
     for (let segment = 0; segment < 8; segment += 1) {
@@ -1341,6 +1485,7 @@ function drawNavigationTraces(
 }
 
 function drawMothershipField(base: MothershipView, now: number): void {
+  if (base.hp <= 0) return;
   const outerRadius = 920;
   if (!isWorldVisible(base.x, base.y, outerRadius + 30)) return;
   const color = TEAM_COLORS[base.team];
@@ -1421,28 +1566,34 @@ function drawStars(): void {
 }
 
 function drawAsteroid(asteroid: AsteroidView): void {
+  const style = ASTEROID_STYLES[asteroid.kind];
   let cached = asteroidPaths.get(asteroid.id);
-  if (!cached || cached.seed !== asteroid.seed || cached.radius !== asteroid.radius) {
+  if (
+    !cached ||
+    cached.seed !== asteroid.seed ||
+    cached.radius !== asteroid.radius ||
+    cached.kind !== asteroid.kind
+  ) {
     const path = new Path2D();
     const random = seeded(asteroid.seed);
-    for (let index = 0; index < 9; index += 1) {
-      const angle = (Math.PI * 2 * index) / 9;
-      const radius = asteroid.radius * (0.78 + random() * 0.26);
+    for (let index = 0; index < style.vertices; index += 1) {
+      const angle = (Math.PI * 2 * index) / style.vertices;
+      const radius = asteroid.radius * (0.82 + random() * style.jitter);
       const x = Math.cos(angle) * radius;
       const y = Math.sin(angle) * radius;
       if (index === 0) path.moveTo(x, y);
       else path.lineTo(x, y);
     }
     path.closePath();
-    cached = { seed: asteroid.seed, radius: asteroid.radius, path };
+    cached = { seed: asteroid.seed, radius: asteroid.radius, kind: asteroid.kind, path };
     asteroidPaths.set(asteroid.id, cached);
   }
   const position = extrapolatedAsteroidPosition(asteroid);
   const integrity = asteroid.hp / asteroid.maxHp;
   context.save();
   context.translate(position.x, position.y);
-  glowStroke(cached.path, integrity < 0.35 ? "#ff9f43" : "#dfff43", 1.15, 0.65 + integrity * 0.35);
-  glowDot(0, 0, 2.4 + asteroid.radius * 0.035, "#f4ff52");
+  glowStroke(cached.path, style.color, 1.15, 0.58 + integrity * 0.42);
+  glowDot(0, 0, (2.2 + asteroid.radius * 0.032) * style.dotScale, style.color);
   context.restore();
 }
 
@@ -1474,8 +1625,10 @@ function drawSalvage(
 }
 
 function drawMothership(base: MothershipView, now: number): void {
+  if (base.hp <= 0) return;
   const color = TEAM_COLORS[base.team];
   const alpha = 0.72 + (base.hp / base.maxHp) * 0.28;
+  drawMothershipUpgradeBay(base, now);
   glowStroke(mothershipPath(base), color, 1.5, alpha);
 
   const innerX = base.x + (base.team === "cyan" ? base.width / 2 : -base.width / 2);
@@ -1508,6 +1661,71 @@ function drawMothership(base: MothershipView, now: number): void {
     barrel.lineTo(cannonX + Math.cos(angle) * 18, cannonY + Math.sin(angle) * 18);
     glowStroke(barrel, color, 1.1, 0.72);
   }
+}
+
+function mothershipUpgradeBay(base: MothershipView): {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+} {
+  const width = Math.min(260, base.width * 0.62);
+  const height = Math.min(240, base.height * 0.18);
+  return {
+    left: base.x - width / 2,
+    top: base.y - height / 2,
+    width,
+    height,
+  };
+}
+
+function drawMothershipUpgradeBay(base: MothershipView, now: number): void {
+  const bay = mothershipUpgradeBay(base);
+  const color = TEAM_COLORS[base.team];
+  const stripeStep = 32;
+  const stripePhase = reducedMotion.matches ? 0 : (now * 0.006) % stripeStep;
+
+  context.save();
+  context.fillStyle = color;
+  context.globalAlpha = 0.035;
+  context.fillRect(bay.left, bay.top, bay.width, bay.height);
+  context.beginPath();
+  context.rect(bay.left, bay.top, bay.width, bay.height);
+  context.clip();
+  context.globalCompositeOperation = "lighter";
+  context.strokeStyle = color;
+  context.globalAlpha = 0.17;
+  context.lineWidth = 1.15 / renderScale;
+  context.beginPath();
+  for (
+    let stripeX = bay.left - bay.height + stripePhase;
+    stripeX < bay.left + bay.width;
+    stripeX += stripeStep
+  ) {
+    context.moveTo(stripeX, bay.top);
+    context.lineTo(stripeX + bay.height, bay.top + bay.height);
+  }
+  context.stroke();
+  context.restore();
+
+  const outline = new Path2D();
+  outline.rect(bay.left, bay.top, bay.width, bay.height);
+  glowStroke(outline, color, 0.85, 0.48, 0.65);
+
+  context.save();
+  context.fillStyle = "#02030a";
+  context.globalAlpha = 0.84;
+  context.fillRect(base.x - 82, base.y - 21, 164, 42);
+  context.font = "700 24px ui-monospace, SFMono-Regular, Menlo, monospace";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.strokeStyle = "#02030a";
+  context.lineWidth = 4 / renderScale;
+  context.strokeText("UPGRADE", base.x, base.y + 1);
+  context.fillStyle = color;
+  context.globalAlpha = 0.95;
+  context.fillText("UPGRADE", base.x, base.y + 1);
+  context.restore();
 }
 
 function mothershipPath(base: MothershipView): Path2D {
@@ -1596,6 +1814,8 @@ function drawShip(ship: ShipView, now: number, frameSeconds: number): void {
   }
   const color = TEAM_COLORS[ship.team];
   const physics = SHIP_PHYSICS[ship.shipClass];
+  const homeBase = snapshot?.motherships.find((base) => base.team === ship.team);
+  const rookieProtected = !ship.docked && rookieProtectionState(ship, homeBase);
 
   if (Math.hypot(ship.vx, ship.vy) > 45 && !ship.docked) {
     const velocityAngle = Math.atan2(ship.vy, ship.vx);
@@ -1615,6 +1835,26 @@ function drawShip(ship: ShipView, now: number, frameSeconds: number): void {
   context.save();
   context.translate(display.x, display.y);
   context.rotate(display.angle);
+  if (rookieProtected) {
+    const shield = new Path2D();
+    const shieldRadius = physics.radius + 9;
+    for (let segment = 0; segment < 4; segment += 1) {
+      const start = segment * (Math.PI / 2) + 0.18;
+      shield.arc(0, 0, shieldRadius, start, start + 1.02);
+    }
+    glowStroke(shield, "#ffffff", 1, 0.52, 0.88);
+  }
+  const ramImpact = RAM_IMPACT_PROFILES[ship.shipClass];
+  if (ship.dashing && ramImpact && ramImpact.arcRadius > 0) {
+    const pulse = reducedMotion.matches ? 0 : Math.sin(now * 0.018) * 2;
+    const radius = ramImpact.arcRadius + pulse;
+    const impactArc = new Path2D();
+    impactArc.moveTo(ramImpact.arcOffset, -radius);
+    impactArc.arc(ramImpact.arcOffset, 0, radius, -Math.PI / 2, Math.PI / 2);
+    impactArc.moveTo(ramImpact.arcOffset, radius);
+    impactArc.lineTo(ramImpact.arcOffset, -radius);
+    glowStroke(impactArc, color, 1.8, 0.72, 1.35);
+  }
   const path = shipPath(ship.shipClass);
   glowStroke(
     path,
@@ -1890,7 +2130,8 @@ function spawnImpact(message: EffectMessage): void {
   }
 
   const pickup = message.kind === "pickup";
-  const breaking = message.kind === "asteroidBreak" || message.kind === "shipBreak";
+  const baseBreak = message.kind === "baseBreak";
+  const breaking = message.kind === "asteroidBreak" || message.kind === "shipBreak" || baseBreak;
   const color =
     pickup || message.kind.startsWith("asteroid")
       ? "#efff4d"
@@ -1899,41 +2140,73 @@ function spawnImpact(message: EffectMessage): void {
         : "#ffffff";
   const motionScale = reducedMotion.matches ? 0.45 : 1;
   const sparkCount = Math.round(
-    (pickup ? 5 + message.intensity * 4 : 7 + message.intensity * 9) * motionScale,
+    (baseBreak ? 44 : pickup ? 5 + message.intensity * 4 : 7 + message.intensity * 9) * motionScale,
   );
   for (let index = 0; index < sparkCount; index += 1) {
     const angle = Math.random() * Math.PI * 2;
-    const speed =
-      (pickup ? 45 + Math.random() * 105 : 90 + Math.random() * 280) *
-      (0.6 + message.intensity * 0.35);
-    const fragment = breaking && index % 3 === 0;
-    const life = fragment ? 0.55 + Math.random() * 0.5 : 0.18 + Math.random() * 0.34;
+    const speed = baseBreak
+      ? 180 + Math.random() * 650
+      : (pickup ? 45 + Math.random() * 105 : 90 + Math.random() * 280) *
+        (0.6 + message.intensity * 0.35);
+    const fragment = breaking && index % (baseBreak ? 2 : 3) === 0;
+    const life = baseBreak
+      ? fragment
+        ? 0.85 + Math.random() * 0.65
+        : 0.35 + Math.random() * 0.55
+      : fragment
+        ? 0.55 + Math.random() * 0.5
+        : 0.18 + Math.random() * 0.34;
     particles.push({
-      x: message.x + (Math.random() - 0.5) * 5,
-      y: message.y + (Math.random() - 0.5) * 5,
+      x: message.x + (Math.random() - 0.5) * (baseBreak ? 90 : 5),
+      y: message.y + (Math.random() - 0.5) * (baseBreak ? 280 : 5),
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       life,
       maxLife: life,
-      size: fragment ? 3 + Math.random() * 4 : 1 + Math.random() * 1.8,
+      size: fragment
+        ? (baseBreak ? 5 : 3) + Math.random() * (baseBreak ? 6 : 4)
+        : 1 + Math.random() * (baseBreak ? 2.4 : 1.8),
       rotation: angle,
       spin: fragment ? (Math.random() - 0.5) * 12 : 0,
       color,
       fragment,
     });
   }
-  flashes.push({
-    x: message.x,
-    y: message.y,
-    life: breaking ? 0.32 : pickup ? 0.22 : 0.18,
-    maxLife: breaking ? 0.32 : pickup ? 0.22 : 0.18,
-    radius: (breaking ? 25 : pickup ? 16 : 12) * Math.max(0.75, message.intensity),
-    color,
-  });
+  if (baseBreak) {
+    for (const [life, radius, ringColor, dotScale] of [
+      [0.38, 95, "#ffffff", 0.72],
+      [0.64, 165, color, 0.12],
+      [0.9, 245, color, 0],
+    ] as const) {
+      flashes.push({
+        x: message.x,
+        y: message.y,
+        life,
+        maxLife: life,
+        radius,
+        color: ringColor,
+        dotScale,
+      });
+    }
+  } else {
+    flashes.push({
+      x: message.x,
+      y: message.y,
+      life: breaking ? 0.32 : pickup ? 0.22 : 0.18,
+      maxLife: breaking ? 0.32 : pickup ? 0.22 : 0.18,
+      radius: (breaking ? 25 : pickup ? 16 : 12) * Math.max(0.75, message.intensity),
+      color,
+    });
+  }
   const distance = Math.hypot(message.x - cameraX, message.y - cameraY);
   const proximity = clamp(1 - distance / 1500, 0, 1);
   if (!pickup && !reducedMotion.matches) {
-    shakeStrength = Math.max(shakeStrength, proximity * message.intensity * (breaking ? 7 : 3.5));
+    shakeStrength = Math.max(
+      shakeStrength,
+      baseBreak
+        ? proximity * Math.min(14, 8 + message.intensity)
+        : proximity * message.intensity * (breaking ? 7 : 3.5),
+    );
   }
   if (pickup) {
     playPickupSound(message.intensity);
@@ -1988,7 +2261,10 @@ function drawEffects(): void {
     const ring = new Path2D();
     ring.arc(flash.x, flash.y, radius, 0, Math.PI * 2);
     glowStroke(ring, flash.color, 1.35 + alpha, alpha * 0.9);
-    glowDot(flash.x, flash.y, Math.max(1.3, flash.radius * alpha * 0.28), "#ffffff");
+    const dotScale = flash.dotScale ?? 1;
+    if (dotScale > 0) {
+      glowDot(flash.x, flash.y, Math.max(1.3, flash.radius * alpha * 0.28 * dotScale), "#ffffff");
+    }
   }
 
   const batches = new Map<string, EffectBatch>();
@@ -2155,30 +2431,34 @@ function playImpactSound(message: EffectMessage, proximity: number): void {
   if (!soundEnabled || !audio || audio.state !== "running" || !impactNoise || proximity <= 0)
     return;
   const now = audio.currentTime;
+  const baseBreak = message.kind === "baseBreak";
   const strength = clamp(message.intensity * proximity, 0.08, 1.6);
   const noise = audio.createBufferSource();
   const noiseGain = audio.createGain();
   const filter = audio.createBiquadFilter();
   noise.buffer = impactNoise;
   filter.type = "bandpass";
-  filter.frequency.value = message.kind.startsWith("asteroid") ? 1700 : 900;
+  filter.frequency.value = baseBreak ? 420 : message.kind.startsWith("asteroid") ? 1700 : 900;
   filter.Q.value = 0.7;
-  noiseGain.gain.setValueAtTime(0.085 * strength, now);
-  noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+  noiseGain.gain.setValueAtTime((baseBreak ? 0.12 : 0.085) * strength, now);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + (baseBreak ? 0.23 : 0.16));
   noise.connect(filter).connect(noiseGain).connect(audio.destination);
   noise.start(now);
-  noise.stop(now + 0.18);
+  noise.stop(now + (baseBreak ? 0.24 : 0.18));
 
   const thump = audio.createOscillator();
   const thumpGain = audio.createGain();
   thump.type = "sine";
-  thump.frequency.setValueAtTime(message.kind.includes("Break") ? 110 : 180, now);
-  thump.frequency.exponentialRampToValueAtTime(45, now + 0.13);
-  thumpGain.gain.setValueAtTime(0.055 * strength, now);
-  thumpGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+  thump.frequency.setValueAtTime(baseBreak ? 72 : message.kind.includes("Break") ? 110 : 180, now);
+  thump.frequency.exponentialRampToValueAtTime(
+    baseBreak ? 24 : 45,
+    now + (baseBreak ? 0.42 : 0.13),
+  );
+  thumpGain.gain.setValueAtTime((baseBreak ? 0.085 : 0.055) * strength, now);
+  thumpGain.gain.exponentialRampToValueAtTime(0.0001, now + (baseBreak ? 0.44 : 0.14));
   thump.connect(thumpGain).connect(audio.destination);
   thump.start(now);
-  thump.stop(now + 0.15);
+  thump.stop(now + (baseBreak ? 0.45 : 0.15));
 }
 
 function drawRadar(dpr: number, screenWidth: number, screenHeight: number): void {
@@ -2220,7 +2500,7 @@ function drawRadar(dpr: number, screenWidth: number, screenHeight: number): void
   context.clip();
 
   for (const asteroid of snapshot.asteroids) {
-    context.fillStyle = "#efff4d66";
+    context.fillStyle = `${ASTEROID_STYLES[asteroid.kind].color}88`;
     context.fillRect(mapX(asteroid.x), mapY(asteroid.y), 1.5, 1.5);
   }
   for (const base of snapshot.motherships) {
@@ -2411,6 +2691,134 @@ function runMothershipThreatSelfTest(): void {
   }
 }
 
+function rookieProtectionState(ship: ShipView, base: MothershipView | undefined): boolean {
+  if (!base || base.team !== ship.team) return false;
+  return (
+    shipTransformTier(ship.shipClass) <= ROOKIE_PROTECTED_MAX_TIER &&
+    ship.x >= base.x - base.width / 2 - ROOKIE_SECTOR_MARGIN &&
+    ship.x <= base.x + base.width / 2 + ROOKIE_SECTOR_MARGIN &&
+    ship.y >= base.y - base.height / 2 - ROOKIE_SECTOR_MARGIN &&
+    ship.y <= base.y + base.height / 2 + ROOKIE_SECTOR_MARGIN
+  );
+}
+
+function updateRookieSectorHint(active: boolean, now: number): boolean {
+  if (active && !rookieSectorHintShown) {
+    rookieSectorHintShown = true;
+    rookieSectorHintUntil = now + ROOKIE_SECTOR_HINT_MS;
+  } else if (!active) {
+    rookieSectorHintUntil = 0;
+  }
+  return active && now < rookieSectorHintUntil;
+}
+
+function runRookieSectorSelfTest(): void {
+  const base: MothershipView = {
+    team: "cyan",
+    x: 1000,
+    y: 2000,
+    width: 420,
+    height: 1400,
+    hp: 3000,
+    maxHp: 3000,
+  };
+  const rookie = {
+    team: "cyan",
+    x: base.x + base.width / 2 + ROOKIE_SECTOR_MARGIN,
+    y: base.y,
+    shipClass: "needle",
+  } as ShipView;
+  if (
+    !rookieProtectionState(rookie, base) ||
+    rookieProtectionState({ ...rookie, x: rookie.x + 1 }, base) ||
+    rookieProtectionState({ ...rookie, shipClass: "lance" }, base) ||
+    rookieProtectionState({ ...rookie, team: "magenta" }, base)
+  ) {
+    throw new Error("Rookie sector boundary regression");
+  }
+
+  const previousHintShown = rookieSectorHintShown;
+  const previousHintUntil = rookieSectorHintUntil;
+  rookieSectorHintShown = false;
+  rookieSectorHintUntil = 0;
+  const firstEntryShows = updateRookieSectorHint(true, 100);
+  const exitHides = !updateRookieSectorHint(false, 200);
+  const secondEntryStaysHidden = !updateRookieSectorHint(true, 300);
+  rookieSectorHintShown = previousHintShown;
+  rookieSectorHintUntil = previousHintUntil;
+  if (!firstEntryShows || !exitHides || !secondEntryStaysHidden) {
+    throw new Error("Rookie sector one-shot hint regression");
+  }
+}
+
+function projectedPersonalCargoValue(cargo: number): number {
+  if (cargo <= 0) return 0;
+  return cargo - Math.max(1, Math.floor(cargo * 0.25));
+}
+
+function hasAffordableUpgradeAfterDeposit(ship: ShipView): boolean {
+  const projectedBank = ship.bank + projectedPersonalCargoValue(ship.cargo);
+  const projectedResearch = Math.min(65_535, ship.research + ship.cargo);
+  const transformReady = (CLASS_UPGRADE_OPTIONS[ship.shipClass] ?? []).some((target) => {
+    const cost = classUpgradeCost(ship.shipClass, target);
+    const research = classResearchRequirement(ship.shipClass, target);
+    return (
+      cost !== undefined &&
+      research !== undefined &&
+      projectedBank >= cost &&
+      projectedResearch >= research
+    );
+  });
+  if (transformReady) return true;
+  return (["weapon", "engine", "hull", "mining"] as const).some(
+    (stat) => ship.stats[stat] < MAX_STAT_LEVEL && projectedBank >= statCost(ship.stats[stat]),
+  );
+}
+
+function runUpgradeReadinessSelfTest(): void {
+  const starter = {
+    shipClass: "scout",
+    bank: 0,
+    research: 0,
+    cargo: 72,
+    stats: { weapon: 0, engine: 0, hull: 0, mining: 0 },
+  } as ShipView;
+  const maxStats = { weapon: 7, engine: 7, hull: 7, mining: 7 };
+  if (
+    hasAffordableUpgradeAfterDeposit(starter) ||
+    !hasAffordableUpgradeAfterDeposit({ ...starter, cargo: 73 }) ||
+    hasAffordableUpgradeAfterDeposit({ ...starter, cargo: 159, stats: maxStats }) ||
+    !hasAffordableUpgradeAfterDeposit({ ...starter, cargo: 160, stats: maxStats }) ||
+    hasAffordableUpgradeAfterDeposit({
+      ...starter,
+      shipClass: "deadeye",
+      cargo: 500,
+      stats: maxStats,
+    })
+  ) {
+    throw new Error("Projected upgrade readiness regression");
+  }
+}
+
+function runMothershipUpgradeBaySelfTest(): void {
+  const base = {
+    team: "cyan",
+    x: 1000,
+    y: 2000,
+    width: 420,
+    height: 1400,
+  } as MothershipView;
+  const bay = mothershipUpgradeBay(base);
+  if (
+    bay.width >= base.width * 0.75 ||
+    bay.height >= base.height * 0.25 ||
+    bay.left <= base.x - base.width / 2 ||
+    bay.top <= base.y - base.height / 2
+  ) {
+    throw new Error("Mothership upgrade bay footprint regression");
+  }
+}
+
 function runProgressionSelfTest(): void {
   if (
     classUpgradeCost("scout", "needle") !== 120 ||
@@ -2462,6 +2870,50 @@ function runProgressionSelfTest(): void {
   if (reached.size !== 29) throw new Error(`Expected 29 reachable frames, got ${reached.size}`);
 }
 
+function runBaseBreakEffectSelfTest(): void {
+  const effectId = 0xfffffff0;
+  const particleCount = particles.length;
+  const flashCount = flashes.length;
+  const effectOrderCount = effectIdOrder.length;
+  const previousShake = shakeStrength;
+  spawnImpact({
+    type: "effect",
+    id: effectId,
+    kind: "baseBreak",
+    x: WORLD_WIDTH / 2,
+    y: WORLD_HEIGHT / 2,
+    team: "cyan",
+    intensity: 5.5,
+  });
+  const generatedParticles = particles.length - particleCount;
+  const generatedFlashes = flashes.length - flashCount;
+  particles.length = particleCount;
+  flashes.length = flashCount;
+  effectIdOrder.length = effectOrderCount;
+  seenEffectIds.delete(effectId);
+  shakeStrength = previousShake;
+  if (generatedParticles < 24 || generatedFlashes !== 3) {
+    throw new Error("Mothership destruction effect regression");
+  }
+}
+
+function applyDockPanelState(): void {
+  const collapsed = dockPanelCollapsed;
+  dockPanel.classList.toggle("collapsed", collapsed);
+  document.body.classList.add("dock-menu-collapsible");
+  document.body.classList.toggle("dock-menu-mobile", mobileDockMedia.matches);
+  document.body.classList.toggle("dock-menu-expanded", !collapsed);
+  dockCollapse.hidden = false;
+  dockCollapse.textContent = collapsed ? "UPGRADES" : "CLOSE";
+  dockCollapse.setAttribute("aria-expanded", String(!collapsed));
+  dockCollapse.setAttribute(
+    "aria-label",
+    collapsed ? "Expand mothership upgrades" : "Close mothership upgrades",
+  );
+  dockContent.inert = collapsed;
+  dockContent.setAttribute("aria-hidden", String(collapsed));
+}
+
 function renderTransformOptions(shipClass: ShipClass): void {
   if (renderedTransformClass === shipClass) return;
   renderedTransformClass = shipClass;
@@ -2505,10 +2957,14 @@ function updateHud(message: SnapshotMessage): void {
   const pilotAbility = required<HTMLElement>("#pilot-ability");
   const apexFrame = shipTransformTier(self.shipClass) === 4;
   const magnetRange = miningMagnetRadius(self.stats.mining);
+  const ramImpact = RAM_IMPACT_PROFILES[self.shipClass];
+  const apexAbility = ramImpact?.arcRadius
+    ? `APEX RAM ARC ${ramImpact.arcRadius * 2} · MULTI-HIT`
+    : "APEX SIEGE SCREEN · TURRET RESIST";
   pilotAbility.textContent = apexFrame
     ? magnetRange > 0
-      ? `APEX SIEGE SCREEN · MAGNET ${magnetRange} · PULL ${self.stats.mining}/${MAX_STAT_LEVEL}`
-      : "APEX SIEGE SCREEN · TURRET RESIST"
+      ? `${apexAbility} · MAGNET ${magnetRange} · PULL ${self.stats.mining}/${MAX_STAT_LEVEL}`
+      : apexAbility
     : magnetRange > 0
       ? `SALVAGE MAGNET · ${magnetRange} RANGE · PULL ${self.stats.mining}/${MAX_STAT_LEVEL}`
       : "";
@@ -2534,15 +2990,23 @@ function updateHud(message: SnapshotMessage): void {
   respawnOverlay.setAttribute("aria-hidden", String(!showRespawnTimer));
   respawnOverlay.style.color = TEAM_COLORS[self.team];
   respawnCountdown.textContent = Math.max(0, self.respawnIn).toFixed(1);
+  const hudNow = performance.now();
   const deepSpace = deepSpaceState(self.x, self.y);
   const showDeepSpaceWarning = self.alive && deepSpace.active;
   deepSpaceWarning.hidden = !showDeepSpaceWarning;
   deepSpaceWarning.classList.toggle("visible", showDeepSpaceWarning);
   deepSpaceWarning.setAttribute("aria-hidden", String(!showDeepSpaceWarning));
   const enemyBase = message.motherships.find((base) => base.team !== self.team);
+  const homeBase = message.motherships.find((base) => base.team === self.team);
+  const rookieSectorActive = self.alive && !self.docked && rookieProtectionState(self, homeBase);
+  const showRookieSectorWarning = updateRookieSectorHint(rookieSectorActive, hudNow);
+  rookieSectorWarning.hidden = !showRookieSectorWarning;
+  rookieSectorWarning.classList.toggle("visible", showRookieSectorWarning);
+  rookieSectorWarning.setAttribute("aria-hidden", String(!showRookieSectorWarning));
+  rookieSectorWarning.style.color = TEAM_COLORS[self.team];
   const showMothershipRangeWarning =
     self.alive && !self.docked && mothershipThreatState(self.x, self.y, enemyBase);
-  const threatNow = performance.now();
+  const threatNow = hudNow;
   if (showMothershipRangeWarning && mothershipThreatStartedAt === 0) {
     mothershipThreatStartedAt = threatNow;
   } else if (!showMothershipRangeWarning) {
@@ -2565,7 +3029,35 @@ function updateHud(message: SnapshotMessage): void {
     showMothershipRangeWarning && lockRemaining === 0,
   );
   mothershipRangeWarning.setAttribute("aria-hidden", String(!showMothershipRangeWarning));
+  document.body.classList.toggle(
+    "has-center-warning",
+    showDeepSpaceWarning || showRookieSectorWarning || showMothershipRangeWarning,
+  );
+  if (upgradeReadyTipShipId !== self.id) {
+    upgradeReadyTipShipId = self.id;
+    upgradeReadyTipShown = false;
+  }
+  const upgradeReadyAfterDeposit = hasAffordableUpgradeAfterDeposit(self);
+  if (self.alive && !self.docked && upgradeReadyAfterDeposit && !upgradeReadyTipShown) {
+    upgradeReadyTipShown = true;
+    showToast(
+      {
+        type: "event",
+        text: "UPGRADE READY · RETURN TO YOUR MOTHERSHIP",
+        tone: "good",
+      },
+      UPGRADE_READY_TIP_MS,
+    );
+  }
   if (import.meta.env.DEV) {
+    const visibleBots = message.ships.filter((ship) => ship.name.startsWith("BOT "));
+    const asteroidKindCounts: Record<AsteroidKind, number> = {
+      rock: 0,
+      iron: 0,
+      crystal: 0,
+      core: 0,
+    };
+    for (const asteroid of message.asteroids) asteroidKindCounts[asteroid.kind] += 1;
     required<HTMLOutputElement>("#playtest-state").value = [
       `x=${self.x.toFixed(1)}`,
       `y=${self.y.toFixed(1)}`,
@@ -2578,11 +3070,23 @@ function updateHud(message: SnapshotMessage): void {
       `research=${self.research}`,
       `mining=${self.stats.mining}`,
       `ships=${message.ships.length}`,
+      `bots=${visibleBots.length}`,
+      `identities=${playerNames.size}`,
+      `bot-cargo=${visibleBots.reduce((total, bot) => total + bot.cargo, 0)}`,
+      `bot-bank=${visibleBots.reduce((total, bot) => total + bot.bank, 0)}`,
+      `bot-tier=${visibleBots.reduce((tier, bot) => Math.max(tier, shipTransformTier(bot.shipClass)), 0)}`,
       `asteroids=${message.asteroids.length}`,
+      `asteroid-kinds=${Object.entries(asteroidKindCounts)
+        .map(([kind, count]) => `${kind}:${count}`)
+        .join(",")}`,
       `projectiles=${message.projectiles.length}`,
       `salvage=${visibleSalvage.length}`,
       `deep-space=${showDeepSpaceWarning}`,
       `mothership-range=${showMothershipRangeWarning}`,
+      `rookie-protected=${rookieSectorActive}`,
+      `rookie-sector=${showRookieSectorWarning}`,
+      `upgrade-ready=${upgradeReadyAfterDeposit}`,
+      `upgrade-tip-shown=${upgradeReadyTipShown}`,
       `touch=${document.body.classList.contains("touch-controls")}`,
       `touch-emulation=${touchMouseEmulation}`,
       `viewport=${viewportWidth()}x${viewportHeight()}`,
@@ -2629,17 +3133,29 @@ function updateBaseHud(team: Team, base: MothershipView | undefined): void {
   if (!base) {
     return;
   }
-  required<HTMLElement>(`#${team}-health`).style.width = `${(base.hp / base.maxHp) * 100}%`;
-  required<HTMLElement>(`#${team}-value`).textContent = `${Math.ceil(base.hp)}`;
+  const percent = Math.round(clamp(base.hp / base.maxHp, 0, 1) * 100);
+  required<HTMLElement>(`#${team}-health`).style.width = `${percent}%`;
+  required<HTMLElement>(`#${team}-value`).textContent = `${percent}%`;
+  const meter = required<HTMLElement>(`#${team}-meter`);
+  meter.setAttribute("aria-valuenow", String(percent));
+  meter.setAttribute("aria-valuetext", `${percent}% health`);
 }
 
-function showToast(message: EventMessage): void {
-  toast.textContent = message.text;
-  toast.className = `show ${message.tone}`;
+function showToast(message: EventMessage, durationMs = 2_200): void {
+  const showInDock =
+    document.body.classList.contains("is-docked") &&
+    document.body.classList.contains("dock-menu-expanded");
+  const target = showInDock ? dockFeedback : toast;
+  const other = showInDock ? toast : dockFeedback;
+  other.textContent = "";
+  other.className = "";
+  target.textContent = message.text;
+  target.className = `show ${message.tone}`;
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => {
-    toast.className = "";
-  }, 2200);
+    target.className = "";
+    target.textContent = "";
+  }, durationMs);
 }
 
 function resize(): void {

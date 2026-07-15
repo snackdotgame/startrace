@@ -6,6 +6,7 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
   type ActionMessage,
+  type AsteroidKind,
   type AsteroidView,
   type EffectMessage,
   type EventMessage,
@@ -23,7 +24,7 @@ import {
   type Team,
 } from "./messages.js";
 
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 9;
 export const DATAGRAM_BUDGET_BYTES = 1000;
 export const MAX_SNAPSHOT_SHIPS = 10;
 export const MAX_SNAPSHOT_ASTEROIDS = 12;
@@ -56,11 +57,11 @@ const ACTION_BYTES = 4;
 const EFFECT_BYTES = 17;
 const SNAPSHOT_HEADER_BYTES = 27;
 const SHIP_BYTES = 32;
-const ASTEROID_BYTES = 25;
+const ASTEROID_BYTES = 26;
 const SALVAGE_BYTES = 14;
 const SALVAGE_HEADER_BYTES = 7;
 const PROJECTILE_BYTES = 20;
-const MAX_IDENTITIES = 16;
+const MAX_IDENTITIES = 32;
 const MAX_NAME_BYTES = 24;
 const MAX_EVENT_BYTES = 160;
 const MOVE_SCALE = 32767;
@@ -104,12 +105,14 @@ const SHIP_CLASSES: readonly ShipClass[] = [
 ];
 const STAT_NAMES: readonly StatName[] = ["weapon", "engine", "hull", "mining"];
 const PROJECTILE_KINDS: readonly ProjectileKind[] = ["bolt", "needle", "drone", "turret"];
+const ASTEROID_KINDS: readonly AsteroidKind[] = ["rock", "iron", "crystal", "core"];
 const EFFECT_KINDS: readonly EffectMessage["kind"][] = [
   "asteroidHit",
   "asteroidBreak",
   "shipHit",
   "shipBreak",
   "baseHit",
+  "baseBreak",
   "dashHit",
   "pickup",
 ];
@@ -760,6 +763,8 @@ function readShip(reader: Reader, namesById: ReadonlyMap<number, string>): ShipV
 }
 
 function writeAsteroid(writer: Writer, asteroid: AsteroidView): void {
+  const kind = ASTEROID_KINDS.indexOf(asteroid.kind);
+  if (kind < 0) throw new Error("Invalid asteroid kind");
   writer.u32(assertUint32(asteroid.id, "asteroid id"));
   if (!isCoordinate(asteroid.x) || !isCoordinate(asteroid.y))
     throw new Error("Invalid asteroid position");
@@ -771,6 +776,7 @@ function writeAsteroid(writer: Writer, asteroid: AsteroidView): void {
   writer.u16(quantizeHealth(asteroid.hp));
   writer.u16(quantizeHealth(asteroid.maxHp));
   writer.u32(assertUint32(asteroid.seed, "asteroid seed"));
+  writer.u8(kind);
 }
 
 function readAsteroid(reader: Reader): AsteroidView | undefined {
@@ -783,14 +789,17 @@ function readAsteroid(reader: Reader): AsteroidView | undefined {
   const hp = reader.u16();
   const maxHp = reader.u16();
   const seed = reader.u32();
+  const kind = reader.u8();
   if (
-    [id, x, y, vx, vy, radius, hp, maxHp, seed].some((value) => value === undefined) ||
+    [id, x, y, vx, vy, radius, hp, maxHp, seed, kind].some((value) => value === undefined) ||
+    (kind as number) >= ASTEROID_KINDS.length ||
     !isCoordinate(x as number) ||
     !isCoordinate(y as number)
   )
     return undefined;
   return {
     id: id as number,
+    kind: ASTEROID_KINDS[kind as number],
     x: x as number,
     y: y as number,
     vx: (vx as number) / VELOCITY_SCALE,
@@ -1007,7 +1016,7 @@ export function runProtocolSelfTest(): void {
     aimY: 0,
     fire: false,
   };
-  const golden = [7, 1, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const golden = [9, 1, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   const inputBytes = encodeInput(input);
   if (!golden.every((value, index) => inputBytes[index] === value) || !decodeInput(inputBytes))
     throw new Error("Input protocol golden vector failed");
@@ -1046,6 +1055,7 @@ export function runProtocolSelfTest(): void {
     { length: MAX_SNAPSHOT_ASTEROIDS },
     (_, index): AsteroidView => ({
       id: index + 1,
+      kind: ASTEROID_KINDS[index % ASTEROID_KINDS.length],
       x: WORLD_WIDTH,
       y: WORLD_HEIGHT,
       vx: 72,
@@ -1102,6 +1112,7 @@ export function runProtocolSelfTest(): void {
   const apexShip = decodedSnapshot?.ships[MAX_SNAPSHOT_SHIPS - 1];
   if (
     snapshotBytes.byteLength > DATAGRAM_BUDGET_BYTES ||
+    decodedSnapshot?.asteroids[MAX_SNAPSHOT_ASTEROIDS - 1]?.kind !== "core" ||
     apexShip?.shipClass !== "streak" ||
     apexShip.research !== 1500 ||
     apexShip.stats.weapon !== 7
@@ -1132,6 +1143,20 @@ export function runProtocolSelfTest(): void {
   const identities = encodeIdentities([{ id: 1, name: "Pilot" }]);
   if (decodeIdentities(identities)?.identities[0]?.name !== "Pilot")
     throw new Error("Identity round trip failed");
+  const fullIdentityPacket = encodeIdentities(
+    Array.from({ length: MAX_IDENTITIES }, (_, index) => ({
+      id: index + 1,
+      name: "X".repeat(MAX_NAME_BYTES),
+    })),
+    true,
+  );
+  const fullIdentityBatch = decodeIdentities(fullIdentityPacket);
+  if (
+    fullIdentityBatch?.identities.length !== MAX_IDENTITIES ||
+    fullIdentityBatch.identities[MAX_IDENTITIES - 1]?.name.length !== MAX_NAME_BYTES
+  ) {
+    throw new Error("Full identity batch protocol failed");
+  }
   const event = encodeEvent({ type: "event", text: "Ready", tone: "good" });
   if (decodeEvent(event)?.text !== "Ready") throw new Error("Event round trip failed");
   const action = encodeAction({ type: "action", action: "upgradeClass", value: "comet" });
@@ -1150,10 +1175,11 @@ export function runProtocolSelfTest(): void {
   const effect = encodeEffect({
     type: "effect",
     id: 1,
-    kind: "pickup",
+    kind: "baseBreak",
     x: 10,
     y: 20,
+    team: "magenta",
     intensity: 1,
   });
-  if (decodeEffect(effect)?.kind !== "pickup") throw new Error("Effect round trip failed");
+  if (decodeEffect(effect)?.kind !== "baseBreak") throw new Error("Effect round trip failed");
 }

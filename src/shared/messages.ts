@@ -4,8 +4,10 @@ export const MOTHERSHIP_X_INSET = 1300;
 export const MOTHERSHIP_WIDTH = 420;
 export const MOTHERSHIP_HEIGHT = 1400;
 export const MOTHERSHIP_MAX_HP = 3000;
-export const MOTHERSHIP_PLAYER_TARGET_RANGE = 1500;
+export const MOTHERSHIP_PLAYER_TARGET_RANGE = 1050;
 export const MOTHERSHIP_LOCK_ON_MS = 200;
+export const ROOKIE_SECTOR_MARGIN = 1100;
+export const ROOKIE_PROTECTED_MAX_TIER = 1;
 
 export interface MothershipTurretMount {
   xFactor: number;
@@ -180,14 +182,14 @@ export const SHIP_PHYSICS: Record<ShipClass, ShipPhysics> = {
     damage: 10,
   },
   ram: {
-    maxHp: 220,
+    maxHp: 240,
     speed: 340,
     acceleration: 1350,
     drag: 3.8,
     radius: 36,
-    cooldown: 1.65,
+    cooldown: 1.4,
     bulletSpeed: 0,
-    damage: 90,
+    damage: 105,
   },
   comet: {
     maxHp: 125,
@@ -260,14 +262,14 @@ export const SHIP_PHYSICS: Record<ShipClass, ShipPhysics> = {
     damage: 12,
   },
   juggernaut: {
-    maxHp: 280,
+    maxHp: 320,
     speed: 330,
     acceleration: 1280,
     drag: 3.9,
     radius: 43,
-    cooldown: 1.8,
+    cooldown: 1.5,
     bulletSpeed: 0,
-    damage: 115,
+    damage: 135,
   },
   interceptor: {
     maxHp: 145,
@@ -340,14 +342,14 @@ export const SHIP_PHYSICS: Record<ShipClass, ShipPhysics> = {
     damage: 11,
   },
   behemoth: {
-    maxHp: 360,
+    maxHp: 420,
     speed: 315,
     acceleration: 1200,
     drag: 4,
     radius: 52,
-    cooldown: 2,
+    cooldown: 1.65,
     bulletSpeed: 0,
-    damage: 145,
+    damage: 170,
   },
   streak: {
     maxHp: 170,
@@ -373,6 +375,32 @@ export interface WeaponProfile {
   dashImpulse: number;
 }
 
+export interface RamImpactProfile {
+  reachBonus: number;
+  arcRadius: number;
+  arcOffset: number;
+  knockback: number;
+  effectIntensity: number;
+}
+
+export const RAM_IMPACT_PROFILES: Partial<Record<ShipClass, RamImpactProfile>> = {
+  ram: { reachBonus: 8, arcRadius: 0, arcOffset: 0, knockback: 260, effectIntensity: 1.65 },
+  juggernaut: {
+    reachBonus: 14,
+    arcRadius: 0,
+    arcOffset: 0,
+    knockback: 360,
+    effectIntensity: 1.9,
+  },
+  behemoth: {
+    reachBonus: 0,
+    arcRadius: 96,
+    arcOffset: 28,
+    knockback: 520,
+    effectIntensity: 2.3,
+  },
+};
+
 const weapon = (
   mode: WeaponMode,
   count = 1,
@@ -395,7 +423,7 @@ export const SHIP_WEAPONS: Record<ShipClass, WeaponProfile> = {
   bastion: weapon("bolt", 1, 0, 1, 1.35),
   nova: weapon("radial", 6),
   prism: weapon("fan", 4, 0.5),
-  ram: weapon("dash", 1, 0, 1, 1.6, 460, 760),
+  ram: weapon("dash", 1, 0, 1, 1.6, 520, 850),
   comet: weapon("dash", 1, 0, 1, 1.15, 190, 430),
   railcore: weapon("rail", 1, 0, 9, 1.15),
   barrage: weapon("fork", 3, 0.18, 3, 1.25),
@@ -403,7 +431,7 @@ export const SHIP_WEAPONS: Record<ShipClass, WeaponProfile> = {
   fortress: weapon("fan", 3, 0.52, 1, 1.45),
   supernova: weapon("radial", 16),
   spectrum: weapon("fan", 7, 0.78),
-  juggernaut: weapon("dash", 1, 0, 1, 1.8, 520, 850),
+  juggernaut: weapon("dash", 1, 0, 1, 1.8, 600, 980),
   interceptor: weapon("dash", 1, 0, 1, 1.2, 170, 470),
   deadeye: weapon("rail", 1, 0, 12, 1.25),
   tempest: weapon("fork", 4, 0.24, 4, 1.3),
@@ -411,7 +439,7 @@ export const SHIP_WEAPONS: Record<ShipClass, WeaponProfile> = {
   citadel: weapon("drone", 5, 0.64, 2, 2),
   quasar: weapon("radial", 20),
   kaleidoscope: weapon("fan", 9, 0.92),
-  behemoth: weapon("dash", 1, 0, 1, 2, 600, 940),
+  behemoth: weapon("dash", 1, 0, 1, 2, 720, 1120),
   streak: weapon("dash", 1, 0, 1, 1.25, 150, 520),
 };
 
@@ -471,8 +499,11 @@ export interface MothershipView {
   maxHp: number;
 }
 
+export type AsteroidKind = "rock" | "iron" | "crystal" | "core";
+
 export interface AsteroidView {
   id: number;
+  kind: AsteroidKind;
   x: number;
   y: number;
   vx: number;
@@ -541,6 +572,7 @@ export interface EffectMessage {
     | "shipHit"
     | "shipBreak"
     | "baseHit"
+    | "baseBreak"
     | "dashHit"
     | "pickup";
   x: number;
@@ -612,7 +644,7 @@ export const SHIP_CLASS_INFO: Record<ShipClass, { description: string; tier: num
   citadel: { description: "APEX SCREEN · 5 HEAVY SENTINELS", tier: 4 },
   quasar: { description: "APEX SCREEN · 20-WAY BARRAGE", tier: 4 },
   kaleidoscope: { description: "APEX SCREEN · 9-BOLT FAN", tier: 4 },
-  behemoth: { description: "APEX SCREEN · MAXIMUM CHARGE", tier: 4 },
+  behemoth: { description: "APEX SCREEN · SEMICIRCLE IMPACT FIELD", tier: 4 },
   streak: { description: "APEX SCREEN · ULTRA-DASH", tier: 4 },
 };
 

@@ -1,5 +1,6 @@
 import { server, type Connection } from "snack:server";
 import {
+  CLASS_UPGRADE_OPTIONS,
   MAX_STAT_LEVEL,
   MOTHERSHIP_HEIGHT,
   MOTHERSHIP_LOCK_ON_MS,
@@ -8,6 +9,9 @@ import {
   MOTHERSHIP_TURRET_MOUNTS,
   MOTHERSHIP_WIDTH,
   MOTHERSHIP_X_INSET,
+  ROOKIE_PROTECTED_MAX_TIER,
+  ROOKIE_SECTOR_MARGIN,
+  RAM_IMPACT_PROFILES,
   SHIP_PHYSICS,
   SHIP_WEAPONS,
   STAT_BONUSES,
@@ -21,6 +25,7 @@ import {
   shipTransformTier,
   statCost,
   type ActionMessage,
+  type AsteroidKind,
   type AsteroidView,
   type EventMessage,
   type EffectMessage,
@@ -58,18 +63,21 @@ const ASTEROID_COUNT = 160;
 const INTEREST_RADIUS = 1400;
 const ASTEROID_SPAWN_MIN_DISTANCE = 350;
 const ASTEROID_SPAWN_DISTANCE_RANGE = 1900;
+const CENTER_ASTEROID_SPAWN_MIN_DISTANCE = 120;
+const CENTER_ASTEROID_SPAWN_DISTANCE_RANGE = 1250;
 const MOTHERSHIP_ASTEROID_DEFENSE_RADIUS = 950;
 const MOTHERSHIP_IMMEDIATE_DEFENSE_MARGIN = 420;
 const MOTHERSHIP_ASTEROID_TARGET_RANGE = 1500;
 const MOTHERSHIP_TURRET_PROJECTILE_SPEED = 1650;
-const MOTHERSHIP_TURRET_MIN_PLAYER_DAMAGE = 8;
-const MOTHERSHIP_TURRET_DAMAGE_FRACTION_BY_TIER = [1, 0.32, 0.2, 0.12, 0.06] as const;
+const MOTHERSHIP_TURRET_MIN_PLAYER_DAMAGE = 2;
+const MOTHERSHIP_TURRET_DAMAGE_FRACTION_BY_TIER = [1, 0.15, 0.08, 0.045, 0.022] as const;
 const MOTHERSHIP_TURRET_ASTEROID_DAMAGE = 60;
 const MOTHERSHIP_TURRET_RELOAD_MS = 650;
 const MOTHERSHIP_PLAYER_VOLLEY_MS = 500;
 const MOTHERSHIP_ASTEROID_VOLLEY_MS = 220;
 const RESPAWN_DELAY_MS = 4000;
-const APEX_MIN_SIEGE_SECONDS = 8;
+const APEX_MIN_SIEGE_SECONDS = 29;
+const APEX_MAX_SIEGE_SECONDS = 32;
 const MAX_PROJECTILES = 180;
 const MAX_SALVAGE = MAX_SALVAGE_PACKET_ITEMS;
 const SALVAGE_VISIBILITY_RADIUS = 3200;
@@ -78,6 +86,106 @@ const BALANCE_REPORT_MS = 60_000;
 const KILL_BOUNTY_BASE = 6;
 const KILL_BOUNTY_PER_TIER = 12;
 const KILL_BOUNTY_PER_STAT = 2;
+const DEFAULT_BOT_FILL = 8;
+const MAX_COMBATANTS = 32;
+const RAM_KNOCKBACK_DURATION_MS = 260;
+const BOT_DECISION_MS = 140;
+const BOT_ATTACK_TIER = 2;
+const BOT_ATTACK_DURATION_MS = 15_000;
+const BOT_ATTACK_COOLDOWN_MS = 42_000;
+const BOT_LOW_HULL_RATIO = 0.42;
+const BOT_MAX_CARGO_TARGET = 220;
+const BOT_SALVAGE_CLAIM_SEPARATION = 150;
+const BOT_ASTEROID_CLAIM_SEPARATION = 260;
+const BOT_SALVAGE_STALL_MS = 1200;
+const BOT_SALVAGE_IGNORE_MS = 1800;
+const BOT_LAUNCH_COMMIT_MS = 1600;
+const BOT_MOTHERSHIP_RESOURCE_CLEARANCE = 60;
+const ASTEROID_MOTHERSHIP_SPAWN_MARGIN = 90;
+
+type AsteroidHome = Team | "center";
+
+interface AsteroidKindConfig {
+  hpPerRadius: number;
+  salvageMultiplier: number;
+  minimumRadius: number;
+  radiusRange: number;
+  speedMultiplier: number;
+}
+
+interface AsteroidKindThreshold {
+  kind: AsteroidKind;
+  maximumRoll: number;
+}
+
+const ASTEROID_KIND_CONFIG: Record<AsteroidKind, AsteroidKindConfig> = {
+  rock: {
+    hpPerRadius: 2.2,
+    salvageMultiplier: 1,
+    minimumRadius: 27,
+    radiusRange: 35,
+    speedMultiplier: 1,
+  },
+  iron: {
+    hpPerRadius: 3,
+    salvageMultiplier: 1.35,
+    minimumRadius: 32,
+    radiusRange: 33,
+    speedMultiplier: 0.85,
+  },
+  crystal: {
+    hpPerRadius: 1.75,
+    salvageMultiplier: 2,
+    minimumRadius: 24,
+    radiusRange: 32,
+    speedMultiplier: 1.2,
+  },
+  core: {
+    hpPerRadius: 3.4,
+    salvageMultiplier: 3,
+    minimumRadius: 40,
+    radiusRange: 28,
+    speedMultiplier: 0.7,
+  },
+};
+
+const BASE_ASTEROID_KINDS: readonly AsteroidKindThreshold[] = [
+  { kind: "rock", maximumRoll: 0.72 },
+  { kind: "iron", maximumRoll: 0.94 },
+  { kind: "crystal", maximumRoll: 1 },
+];
+const CENTER_ASTEROID_KINDS: readonly AsteroidKindThreshold[] = [
+  { kind: "rock", maximumRoll: 0.34 },
+  { kind: "iron", maximumRoll: 0.64 },
+  { kind: "crystal", maximumRoll: 0.89 },
+  { kind: "core", maximumRoll: 1 },
+];
+
+type BotMode = "mine" | "return" | "attack";
+
+interface BotBrain {
+  serial: number;
+  mode: BotMode;
+  nextDecisionAt: number;
+  nextAttackAt: number;
+  attackUntil: number;
+  laneY: number;
+  strafeSign: number;
+  salvageTargetId: number | null;
+  asteroidTargetId: number | null;
+  salvageProgressTargetId: number | null;
+  salvageBestDistance: number;
+  salvageLastProgressAt: number;
+  ignoredSalvageId: number | null;
+  ignoredSalvageUntil: number;
+  launchUntil: number;
+}
+
+interface BotResourceClaim {
+  id: number;
+  x: number;
+  y: number;
+}
 
 interface ControlState {
   sequence: number;
@@ -90,12 +198,14 @@ interface ControlState {
 
 interface PlayerState extends ShipView {
   wireId: number;
+  bot: BotBrain | null;
   input: ControlState;
   lastInputAt: number;
   nextFireAt: number;
   respawnAt: number;
   dashUntil: number;
   dashHits: Set<string>;
+  ramKnockbackUntil: number;
   mothershipThreatEnteredAt: number | null;
 }
 
@@ -106,6 +216,7 @@ interface MothershipState extends MothershipView {
 
 interface AsteroidState extends AsteroidView {
   nextMothershipImpactAt: number;
+  home: AsteroidHome;
 }
 
 interface SalvageState extends SalvageView {
@@ -121,6 +232,7 @@ interface ProjectileState extends ProjectileView {
   pierce: number;
   createdAt: number;
   sourceClass?: ShipClass;
+  rookieProtectedAtLaunch?: boolean;
 }
 
 interface ClassBalanceMetrics {
@@ -151,6 +263,9 @@ interface RoundBalanceMetrics {
   turretWarningMs: number;
   turretWarningSamples: number;
   turretFlightMs: number;
+  botDockings: number;
+  botLaunches: number;
+  botUnfundedDockings: number;
   firstTransform: BalanceMilestone | null;
   firstKill: BalanceMilestone | null;
   firstPlayerBaseDamage: BalanceMilestone | null;
@@ -198,12 +313,15 @@ let nextEffectId = 1;
 let nextPlayerWireId = 1;
 let nextSnapshotSequence = 1;
 let nextSalvageSequence = 1;
+let nextBotSerial = 0;
+let configuredBotFill = DEFAULT_BOT_FILL;
 let winner: Team | null = null;
 let resetAt = 0;
 let balanceMetrics = createBalanceMetrics(0);
 
 export async function main(): Promise<void> {
   validateBalanceTuning();
+  configuredBotFill = readBotFillConfig();
   resetRound(0);
   let nextTick = server.elapsedMs();
   let lastSnapshot = 0;
@@ -250,8 +368,8 @@ export async function main(): Promise<void> {
 function syncConnections(now: number): void {
   const live = new Set(server.connections.map((connection) => connection.id));
   let rosterChanged = false;
-  for (const id of players.keys()) {
-    if (!live.has(id)) {
+  for (const [id, player] of players) {
+    if (!player.bot && !live.has(id)) {
       players.delete(id);
       rosterChanged = true;
     }
@@ -259,28 +377,41 @@ function syncConnections(now: number): void {
 
   for (const connection of server.connections) {
     if (!players.has(connection.id)) {
-      const team = smallerTeam();
+      if (players.size >= MAX_COMBATANTS && !removeOneBot()) {
+        connection.close("game is full");
+        continue;
+      }
+      const team = smallerHumanTeam();
       const player = createPlayer(connection, team, now);
       players.set(connection.id, player);
       classMetrics("scout").picks += 1;
-      server.streams.send(
-        connection.id,
-        encodeIdentities(
-          Array.from(players.values(), ({ wireId, name }) => ({ id: wireId, name })),
-          true,
-        ),
-      );
-      server.streams.broadcast(encodeIdentities([{ id: player.wireId, name: player.name }]));
+      rosterChanged = true;
       sendEvent(connection.id, `Joined ${team.toUpperCase()} team`, "good");
     }
   }
+  rosterChanged = syncBots(now) || rosterChanged;
   if (rosterChanged) broadcastIdentities();
 }
 
-function smallerTeam(): Team {
+function readBotFillConfig(): number {
+  const raw = server.config.botFill;
+  const value =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number(raw)
+        : raw === false
+          ? 0
+          : DEFAULT_BOT_FILL;
+  if (!Number.isFinite(value)) return DEFAULT_BOT_FILL;
+  return clamp(Math.round(value), 0, MAX_COMBATANTS);
+}
+
+function smallerHumanTeam(): Team {
   let cyan = 0;
   let magenta = 0;
   for (const player of players.values()) {
+    if (player.bot) continue;
     if (player.team === "cyan") {
       cyan += 1;
     } else {
@@ -288,6 +419,73 @@ function smallerTeam(): Team {
     }
   }
   return cyan <= magenta ? "cyan" : "magenta";
+}
+
+function teamCounts(): Record<Team, number> {
+  const counts: Record<Team, number> = { cyan: 0, magenta: 0 };
+  for (const player of players.values()) counts[player.team] += 1;
+  return counts;
+}
+
+function syncBots(now: number): boolean {
+  let humans = 0;
+  let bots = 0;
+  for (const player of players.values()) {
+    if (player.bot) bots += 1;
+    else humans += 1;
+  }
+  const desired = Math.max(0, Math.min(configuredBotFill - humans, MAX_COMBATANTS - humans));
+  let changed = false;
+  while (bots < desired) {
+    addBot(now);
+    bots += 1;
+    changed = true;
+  }
+  while (bots > desired) {
+    if (!removeOneBot()) break;
+    bots -= 1;
+    changed = true;
+  }
+  return changed;
+}
+
+function addBot(now: number): void {
+  const counts = teamCounts();
+  const team: Team = counts.cyan <= counts.magenta ? "cyan" : "magenta";
+  const serial = nextBotSerial++;
+  const names = ["VECTOR", "NOVA", "SPARK", "COMET", "PULSE", "PRISM", "ORBIT", "FLARE"];
+  const bot: BotBrain = {
+    serial,
+    mode: "mine",
+    nextDecisionAt: now,
+    nextAttackAt: now + 35_000 + (serial % 4) * 5000,
+    attackUntil: 0,
+    laneY: WORLD_HEIGHT / 2 + ((serial % 5) - 2) * 220,
+    strafeSign: serial % 2 === 0 ? 1 : -1,
+    salvageTargetId: null,
+    asteroidTargetId: null,
+    salvageProgressTargetId: null,
+    salvageBestDistance: Number.POSITIVE_INFINITY,
+    salvageLastProgressAt: now,
+    ignoredSalvageId: null,
+    ignoredSalvageUntil: 0,
+    launchUntil: now + BOT_LAUNCH_COMMIT_MS,
+  };
+  const id = `bot:${serial}`;
+  const player = createPlayerState(id, `BOT ${names[serial % names.length]}`, team, now, bot);
+  players.set(id, player);
+  classMetrics("scout").picks += 1;
+}
+
+function removeOneBot(): boolean {
+  const counts = teamCounts();
+  const preferredTeam: Team = counts.cyan >= counts.magenta ? "cyan" : "magenta";
+  const entry =
+    Array.from(players).find(([, player]) => player.bot && player.team === preferredTeam) ??
+    Array.from(players).find(([, player]) => player.bot);
+  if (!entry) return false;
+  players.delete(entry[0]);
+  return true;
 }
 
 function allocateWireId(): number {
@@ -310,12 +508,22 @@ function broadcastIdentities(): void {
 }
 
 function createPlayer(connection: Connection, team: Team, now: number): PlayerState {
+  return createPlayerState(connection.id, connection.userName.slice(0, 24), team, now, null);
+}
+
+function createPlayerState(
+  id: string,
+  name: string,
+  team: Team,
+  now: number,
+  bot: BotBrain | null,
+): PlayerState {
   const spawn = spawnPoint(team);
   const stats = emptyStats();
   return {
-    id: connection.id,
+    id,
     wireId: allocateWireId(),
-    name: connection.userName.slice(0, 24),
+    name,
     team,
     x: spawn.x,
     y: spawn.y,
@@ -333,6 +541,7 @@ function createPlayer(connection: Connection, team: Team, now: number): PlayerSt
     alive: true,
     respawnIn: 0,
     dashing: false,
+    bot,
     input: {
       sequence: 0,
       moveX: 0,
@@ -346,12 +555,491 @@ function createPlayer(connection: Connection, team: Team, now: number): PlayerSt
     respawnAt: 0,
     dashUntil: 0,
     dashHits: new Set<string>(),
+    ramKnockbackUntil: 0,
     mothershipThreatEnteredAt: null,
   };
 }
 
 function emptyStats(): ShipStats {
   return { weapon: 0, engine: 0, hull: 0, mining: 0 };
+}
+
+function updateBotInput(player: PlayerState, now: number): void {
+  const brain = player.bot;
+  if (!brain) return;
+  player.lastInputAt = now;
+  if (!player.alive || winner) {
+    clearBotResourceTargets(brain);
+    setBotIntent(
+      player,
+      0,
+      0,
+      player.x + Math.cos(player.angle),
+      player.y + Math.sin(player.angle),
+      false,
+    );
+    return;
+  }
+  if (now < brain.nextDecisionAt) return;
+  brain.nextDecisionAt = now + BOT_DECISION_MS + (brain.serial % 4) * 9;
+  player.input.sequence = (player.input.sequence + 1) >>> 0;
+
+  if (player.docked) {
+    clearBotResourceTargets(brain);
+    botUseDock(player, brain, now);
+    setBotLaunchIntent(player, brain);
+    return;
+  }
+
+  if (now < brain.launchUntil) {
+    clearBotResourceTargets(brain);
+    setBotLaunchIntent(player, brain);
+    return;
+  }
+
+  const cargoTarget = botCargoTarget(player, brain);
+  const lowHull = player.hp / Math.max(1, player.maxHp) <= BOT_LOW_HULL_RATIO;
+  if (
+    (lowHull && botCanFundRepair(player)) ||
+    player.cargo >= cargoTarget ||
+    (brain.mode === "attack" && now >= brain.attackUntil)
+  ) {
+    brain.mode = "return";
+  }
+  if (brain.mode === "attack" && shipTransformTier(player.shipClass) < BOT_ATTACK_TIER) {
+    brain.mode = "mine";
+  }
+
+  const nearbyEnemy = nearestEnemyPlayer(player, 620);
+  if (brain.mode === "return") {
+    clearBotResourceTargets(brain);
+    const base = motherships[player.team];
+    const targetY = clamp(
+      brain.laneY,
+      base.y - base.height / 2 + CLASS_CONFIG[player.shipClass].radius + 18,
+      base.y + base.height / 2 - CLASS_CONFIG[player.shipClass].radius - 18,
+    );
+    setBotMovement(player, base.x, targetY, 0, false, brain.strafeSign);
+    if (nearbyEnemy) aimBotAt(player, nearbyEnemy, now, true);
+    else setBotAim(player, base.x, targetY, false);
+    return;
+  }
+
+  if (brain.mode === "attack") {
+    clearBotResourceTargets(brain);
+    botAttack(player, brain, nearbyEnemy, now);
+    return;
+  }
+
+  if (nearbyEnemy) {
+    clearBotResourceTargets(brain);
+    setBotMovement(player, nearbyEnemy.x, nearbyEnemy.y, 260, true, brain.strafeSign);
+    aimBotAt(player, nearbyEnemy, now, true);
+    return;
+  }
+
+  const salvageTarget = nearestSalvageForBot(player, 1500, now);
+  if (salvageTarget) {
+    setBotMovement(player, salvageTarget.x, salvageTarget.y, 0, false, brain.strafeSign);
+    setBotAim(player, salvageTarget.x, salvageTarget.y, false);
+    return;
+  }
+
+  const asteroidTarget = nearestAsteroidForBot(player, 2100);
+  if (asteroidTarget) {
+    const weapon = SHIP_WEAPONS[player.shipClass];
+    const dash = weapon.mode === "dash";
+    const standOff = dash ? 0 : 210 + asteroidTarget.radius;
+    setBotMovement(player, asteroidTarget.x, asteroidTarget.y, standOff, !dash, brain.strafeSign);
+    const distance = Math.hypot(asteroidTarget.x - player.x, asteroidTarget.y - player.y);
+    const reach = dash
+      ? 330
+      : Math.min(900, Math.max(520, CLASS_CONFIG[player.shipClass].bulletSpeed * 1.05));
+    aimBotAt(player, asteroidTarget, now, distance <= reach);
+    return;
+  }
+
+  const direction = player.team === "cyan" ? 1 : -1;
+  setBotIntent(player, direction * 0.7, 0, player.x + direction * 500, player.y, false);
+}
+
+function botUseDock(player: PlayerState, brain: BotBrain, now: number): void {
+  brain.launchUntil = now + BOT_LAUNCH_COMMIT_MS;
+  for (let repairs = 0; repairs < 4 && player.hp < player.maxHp * 0.9; repairs += 1) {
+    const before = player.hp;
+    repairPlayer(player);
+    if (player.hp <= before) break;
+  }
+  botSpendBank(player, brain, now);
+  const base = motherships[player.team];
+  if (base.hp < base.maxHp * 0.68 && teamBank[player.team] >= 15) repairMothership(player);
+
+  if (brain.mode === "attack" && now < brain.attackUntil) {
+    return;
+  }
+  if (shipTransformTier(player.shipClass) >= BOT_ATTACK_TIER && now >= brain.nextAttackAt) {
+    brain.mode = "attack";
+    brain.attackUntil = now + BOT_ATTACK_DURATION_MS;
+    brain.nextAttackAt = now + BOT_ATTACK_COOLDOWN_MS;
+  } else {
+    brain.mode = "mine";
+  }
+}
+
+function setBotLaunchIntent(player: PlayerState, brain: BotBrain): void {
+  const direction = botLaunchDirection(player.team);
+  const laneOffset = clamp((brain.laneY - player.y) / 240, -0.45, 0.45);
+  setBotIntent(
+    player,
+    direction,
+    laneOffset,
+    player.x + direction * 600,
+    player.y + laneOffset * 300,
+    false,
+  );
+}
+
+function botLaunchDirection(team: Team): 1 | -1 {
+  return team === "cyan" ? 1 : -1;
+}
+
+function botSpendBank(player: PlayerState, brain: BotBrain, now: number): void {
+  const statPriority: readonly StatName[] = ["mining", "weapon", "engine", "hull"];
+  for (let action = 0; action < 12; action += 1) {
+    const options = CLASS_UPGRADE_OPTIONS[player.shipClass];
+    if (options?.length) {
+      const target = options[(brain.serial + shipTransformTier(player.shipClass)) % options.length];
+      const cost = classUpgradeCost(player.shipClass, target);
+      const research = classResearchRequirement(player.shipClass, target);
+      if (cost !== undefined && research !== undefined && player.research >= research) {
+        if (player.bank < cost) return;
+        upgradeClass(player, target, now);
+        continue;
+      }
+      if (player.stats.mining === 0 && player.bank >= statCost(0)) {
+        upgradeStat(player, "mining");
+      }
+      return;
+    }
+
+    const available = statPriority.filter((stat) => player.stats[stat] < MAX_STAT_LEVEL);
+    if (available.length === 0) return;
+    const minimumLevel = Math.min(...available.map((stat) => player.stats[stat]));
+    const stat = available.find((candidate) => player.stats[candidate] === minimumLevel);
+    if (!stat || player.bank < statCost(player.stats[stat])) return;
+    upgradeStat(player, stat);
+  }
+}
+
+function botCargoTarget(player: PlayerState, brain: BotBrain): number {
+  const options = CLASS_UPGRADE_OPTIONS[player.shipClass];
+  if (!options?.length) return 150;
+  const target = options[(brain.serial + shipTransformTier(player.shipClass)) % options.length];
+  const cost = classUpgradeCost(player.shipClass, target) ?? 0;
+  const research = classResearchRequirement(player.shipClass, target) ?? 0;
+  const researchNeeded = Math.max(0, research - player.research);
+  const bankNeeded = Math.max(0, cost - player.bank);
+  const grossForBank = Math.ceil(bankNeeded / 0.75);
+  return clamp(Math.max(70, researchNeeded, grossForBank), 70, BOT_MAX_CARGO_TARGET);
+}
+
+function botCanFundRepair(player: Pick<PlayerState, "bank" | "cargo" | "hp" | "maxHp">): boolean {
+  return player.bank + personalCargoValue(player.cargo) >= nextPlayerRepairCost(player);
+}
+
+function botAttack(
+  player: PlayerState,
+  brain: BotBrain,
+  nearbyEnemy: PlayerState | undefined,
+  now: number,
+): void {
+  const base = motherships[otherTeam(player.team)];
+  const approachDirection = player.team === "cyan" ? -1 : 1;
+  const standOffX = base.x + approachDirection * (base.width / 2 + 260);
+  const standOffY = clamp(brain.laneY, base.y - base.height * 0.36, base.y + base.height * 0.36);
+  setBotMovement(player, standOffX, standOffY, 45, true, brain.strafeSign);
+  if (nearbyEnemy) {
+    aimBotAt(player, nearbyEnemy, now, true);
+    return;
+  }
+  const distanceToBase = distanceToRect(player.x, player.y, base);
+  const dash = SHIP_WEAPONS[player.shipClass].mode === "dash";
+  if (dash && distanceToBase < 430) {
+    setBotMovement(player, base.x, base.y, 0, false, brain.strafeSign);
+  }
+  setBotAim(player, base.x, base.y, distanceToBase <= (dash ? 430 : 820));
+}
+
+function nearestEnemyPlayer(player: PlayerState, maximumDistance: number): PlayerState | undefined {
+  let nearest: PlayerState | undefined;
+  let bestDistanceSquared = maximumDistance * maximumDistance;
+  for (const candidate of players.values()) {
+    if (
+      !candidate.alive ||
+      candidate.docked ||
+      candidate.team === player.team ||
+      rookieProtectionActive(candidate)
+    ) {
+      continue;
+    }
+    const candidateDistanceSquared = distanceSquared(player.x, player.y, candidate.x, candidate.y);
+    if (candidateDistanceSquared < bestDistanceSquared) {
+      nearest = candidate;
+      bestDistanceSquared = candidateDistanceSquared;
+    }
+  }
+  return nearest;
+}
+
+function nearestSalvageForBot(
+  player: PlayerState,
+  maximumDistance: number,
+  now: number,
+): SalvageState | undefined {
+  const brain = player.bot;
+  if (!brain) return undefined;
+  if (brain.salvageTargetId !== null) {
+    const current = salvage.find((item) => item.id === brain.salvageTargetId);
+    if (
+      current &&
+      botResourceInMiningLane(player.team, current) &&
+      distanceSquared(player.x, player.y, current.x, current.y) <=
+        maximumDistance * maximumDistance * 1.44
+    ) {
+      if (botSalvageTargetProgressing(player, brain, current, now)) return current;
+      brain.ignoredSalvageId = current.id;
+      brain.ignoredSalvageUntil = now + BOT_SALVAGE_IGNORE_MS;
+      brain.strafeSign *= -1;
+    }
+    brain.salvageTargetId = null;
+  }
+  const claimed = botResourceClaims(player, "salvageTargetId", salvage);
+  if (brain.ignoredSalvageId !== null && now < brain.ignoredSalvageUntil) {
+    const ignored = salvage.find((item) => item.id === brain.ignoredSalvageId);
+    if (ignored) claimed.push({ id: ignored.id, x: ignored.x, y: ignored.y });
+  } else {
+    brain.ignoredSalvageId = null;
+  }
+  const nearest = nearestUnclaimedResource(
+    player.x,
+    player.y,
+    salvage,
+    claimed,
+    maximumDistance,
+    BOT_SALVAGE_CLAIM_SEPARATION,
+    (item) => botResourceInMiningLane(player.team, item),
+  );
+  brain.salvageTargetId = nearest?.id ?? null;
+  if (nearest) {
+    brain.asteroidTargetId = null;
+    beginBotSalvageProgress(player, brain, nearest, now);
+  }
+  return nearest;
+}
+
+function beginBotSalvageProgress(
+  player: PlayerState,
+  brain: BotBrain,
+  target: SalvageState,
+  now: number,
+): void {
+  brain.salvageProgressTargetId = target.id;
+  brain.salvageBestDistance = Math.hypot(target.x - player.x, target.y - player.y);
+  brain.salvageLastProgressAt = now;
+}
+
+function botSalvageTargetProgressing(
+  player: PlayerState,
+  brain: BotBrain,
+  target: SalvageState,
+  now: number,
+): boolean {
+  if (brain.salvageProgressTargetId !== target.id) {
+    beginBotSalvageProgress(player, brain, target, now);
+    return true;
+  }
+  const distance = Math.hypot(target.x - player.x, target.y - player.y);
+  if (distance + 18 < brain.salvageBestDistance) {
+    brain.salvageBestDistance = distance;
+    brain.salvageLastProgressAt = now;
+  }
+  return now - brain.salvageLastProgressAt <= BOT_SALVAGE_STALL_MS;
+}
+
+function nearestAsteroidForBot(
+  player: PlayerState,
+  maximumDistance: number,
+): AsteroidState | undefined {
+  const brain = player.bot;
+  if (!brain) return undefined;
+  if (brain.asteroidTargetId !== null) {
+    const current = asteroids.find((asteroid) => asteroid.id === brain.asteroidTargetId);
+    if (
+      current &&
+      botResourceInMiningLane(player.team, current) &&
+      distanceSquared(player.x, player.y, current.x, current.y) <=
+        maximumDistance * maximumDistance * 1.44
+    ) {
+      return current;
+    }
+    brain.asteroidTargetId = null;
+  }
+  const claimed = botResourceClaims(player, "asteroidTargetId", asteroids);
+  const nearest = nearestUnclaimedResource(
+    player.x,
+    player.y,
+    asteroids,
+    claimed,
+    maximumDistance,
+    BOT_ASTEROID_CLAIM_SEPARATION,
+    (asteroid) => botResourceInMiningLane(player.team, asteroid),
+  );
+  brain.asteroidTargetId = nearest?.id ?? null;
+  if (nearest) brain.salvageTargetId = null;
+  return nearest;
+}
+
+function botResourceInMiningLane(team: Team, resource: Pick<SalvageState, "x" | "y">): boolean {
+  const base = motherships[team];
+  const frontEdge =
+    base.x + botLaunchDirection(team) * (base.width / 2 + BOT_MOTHERSHIP_RESOURCE_CLEARANCE);
+  return team === "cyan" ? resource.x >= frontEdge : resource.x <= frontEdge;
+}
+
+function botResourceClaims<T extends { id: number; x: number; y: number }>(
+  player: PlayerState,
+  key: "salvageTargetId" | "asteroidTargetId",
+  resources: readonly T[],
+): BotResourceClaim[] {
+  const claimed: BotResourceClaim[] = [];
+  for (const teammate of players.values()) {
+    if (
+      teammate.id === player.id ||
+      teammate.team !== player.team ||
+      !teammate.alive ||
+      !teammate.bot ||
+      teammate.bot.mode !== "mine"
+    ) {
+      continue;
+    }
+    const targetId = teammate.bot[key];
+    if (targetId === null) continue;
+    const resource = resources.find((candidate) => candidate.id === targetId);
+    if (resource) claimed.push({ id: resource.id, x: resource.x, y: resource.y });
+  }
+  return claimed;
+}
+
+function nearestUnclaimedResource<T extends { id: number; x: number; y: number }>(
+  x: number,
+  y: number,
+  resources: readonly T[],
+  claimed: readonly BotResourceClaim[],
+  maximumDistance: number,
+  claimSeparation = 0,
+  eligible: (resource: T) => boolean = () => true,
+): T | undefined {
+  let nearest: T | undefined;
+  let bestDistanceSquared = maximumDistance * maximumDistance;
+  const separationSquared = claimSeparation * claimSeparation;
+  for (const resource of resources) {
+    if (!eligible(resource)) continue;
+    if (
+      claimed.some(
+        (claim) =>
+          claim.id === resource.id ||
+          distanceSquared(claim.x, claim.y, resource.x, resource.y) < separationSquared,
+      )
+    ) {
+      continue;
+    }
+    const candidateDistanceSquared = distanceSquared(x, y, resource.x, resource.y);
+    if (candidateDistanceSquared < bestDistanceSquared) {
+      nearest = resource;
+      bestDistanceSquared = candidateDistanceSquared;
+    }
+  }
+  return nearest;
+}
+
+function clearBotResourceTargets(brain: BotBrain): void {
+  brain.salvageTargetId = null;
+  brain.asteroidTargetId = null;
+  brain.salvageProgressTargetId = null;
+  brain.salvageBestDistance = Number.POSITIVE_INFINITY;
+  brain.ignoredSalvageId = null;
+  brain.ignoredSalvageUntil = 0;
+}
+
+function aimBotAt(
+  player: PlayerState,
+  target: { x: number; y: number; vx: number; vy: number },
+  now: number,
+  fire: boolean,
+): void {
+  const distance = Math.hypot(target.x - player.x, target.y - player.y);
+  const bulletSpeed = Math.max(500, CLASS_CONFIG[player.shipClass].bulletSpeed);
+  const travelSeconds = distance / bulletSpeed;
+  const aimX = target.x + target.vx * travelSeconds * 0.65;
+  const aimY = target.y + target.vy * travelSeconds * 0.65;
+  const wobble =
+    Math.sin(now * 0.004 + (player.bot?.serial ?? 0) * 1.7) * Math.min(0.08, distance / 8000);
+  const angle = Math.atan2(aimY - player.y, aimX - player.x) + wobble;
+  setBotAim(
+    player,
+    player.x + Math.cos(angle) * distance,
+    player.y + Math.sin(angle) * distance,
+    fire,
+  );
+}
+
+function setBotMovement(
+  player: PlayerState,
+  targetX: number,
+  targetY: number,
+  stopDistance: number,
+  strafe: boolean,
+  strafeSign: number,
+): void {
+  const dx = targetX - player.x;
+  const dy = targetY - player.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance <= 0.001) {
+    player.input.moveX = 0;
+    player.input.moveY = 0;
+    return;
+  }
+  const nx = dx / distance;
+  const ny = dy / distance;
+  const approach = distance > stopDistance + 55 ? 1 : distance < stopDistance - 35 ? -0.45 : 0;
+  const strafeAmount = strafe && distance <= stopDistance + 160 ? 0.58 * strafeSign : 0;
+  player.input.moveX = nx * approach - ny * strafeAmount;
+  player.input.moveY = ny * approach + nx * strafeAmount;
+}
+
+function setBotAim(player: PlayerState, aimX: number, aimY: number, fire: boolean): void {
+  player.input.aimX = aimX;
+  player.input.aimY = aimY;
+  player.input.fire = fire;
+}
+
+function setBotIntent(
+  player: PlayerState,
+  moveX: number,
+  moveY: number,
+  aimX: number,
+  aimY: number,
+  fire: boolean,
+): void {
+  player.input.moveX = moveX;
+  player.input.moveY = moveY;
+  setBotAim(player, aimX, aimY, fire);
+}
+
+function distanceToRect(x: number, y: number, base: MothershipState): number {
+  const dx = Math.max(Math.abs(x - base.x) - base.width / 2, 0);
+  const dy = Math.max(Math.abs(y - base.y) - base.height / 2, 0);
+  return Math.hypot(dx, dy);
 }
 
 function handleAction(player: PlayerState, message: ActionMessage, now: number): void {
@@ -383,8 +1071,8 @@ function depositCargo(player: PlayerState): void {
     return;
   }
   const deposited = player.cargo;
-  const contribution = Math.max(1, Math.floor(deposited * 0.25));
-  const personal = deposited - contribution;
+  const personal = personalCargoValue(deposited);
+  const contribution = deposited - personal;
   player.bank += personal;
   player.research = Math.min(65535, player.research + deposited);
   teamBank[player.team] += contribution;
@@ -398,6 +1086,16 @@ function depositCargo(player: PlayerState): void {
   player.cargo = 0;
 }
 
+function personalCargoValue(cargo: number): number {
+  if (cargo <= 0) return 0;
+  return cargo - Math.max(1, Math.floor(cargo * 0.25));
+}
+
+function nextPlayerRepairCost(player: Pick<PlayerState, "hp" | "maxHp">): number {
+  const repair = Math.min(32, Math.max(0, player.maxHp - player.hp));
+  return Math.ceil(repair / 4);
+}
+
 function repairPlayer(player: PlayerState): void {
   const missing = player.maxHp - player.hp;
   if (missing <= 0.5) {
@@ -405,7 +1103,7 @@ function repairPlayer(player: PlayerState): void {
     return;
   }
   const repair = Math.min(32, missing);
-  const cost = Math.ceil(repair / 4);
+  const cost = nextPlayerRepairCost(player);
   if (player.bank < cost) {
     sendEvent(player.id, `Repair needs ${cost} salvage`, "bad");
     return;
@@ -509,6 +1207,7 @@ function updatePlayers(dt: number, now: number): void {
     }
 
     player.maxHp = playerMaxHp(player);
+    updateBotInput(player, now);
     const config = CLASS_CONFIG[player.shipClass];
     if (now - player.lastInputAt > 250) {
       player.input.moveX = 0;
@@ -530,7 +1229,9 @@ function updatePlayers(dt: number, now: number): void {
     player.vx *= drag;
     player.vy *= drag;
     const dashSpeed = Math.max(config.speed * 1.9, weapon.dashImpulse);
-    const maxSpeed = (player.dashing ? dashSpeed : config.speed) * engineMultiplier;
+    const impactSpeedMultiplier = player.ramKnockbackUntil > now ? 1.8 : 1;
+    const maxSpeed =
+      (player.dashing ? dashSpeed : config.speed) * engineMultiplier * impactSpeedMultiplier;
     const speed = Math.hypot(player.vx, player.vy);
     if (speed > maxSpeed) {
       player.vx = (player.vx / speed) * maxSpeed;
@@ -568,6 +1269,7 @@ function updatePlayers(dt: number, now: number): void {
       motherships[player.team],
       config.radius,
     );
+    recordBotDockTransition(player, wasDocked);
     if (player.docked && !wasDocked) depositCargo(player);
     if (!player.docked && wasDocked) sendEvent(player.id, "Launch!", "info");
 
@@ -602,6 +1304,17 @@ function updatePlayers(dt: number, now: number): void {
       });
     }
   }
+}
+
+function recordBotDockTransition(player: PlayerState, wasDocked: boolean): void {
+  if (!player.bot || player.docked === wasDocked) return;
+  if (!player.docked) {
+    balanceMetrics.botLaunches += 1;
+    return;
+  }
+  balanceMetrics.botDockings += 1;
+  const lowHull = player.hp / Math.max(1, player.maxHp) <= BOT_LOW_HULL_RATIO;
+  if (lowHull && !botCanFundRepair(player)) balanceMetrics.botUnfundedDockings += 1;
 }
 
 function fireWeapon(player: PlayerState, now: number): void {
@@ -730,6 +1443,7 @@ function spawnProjectile(
     pierce,
     createdAt: now,
     sourceClass: player.shipClass,
+    rookieProtectedAtLaunch: rookieProtectionActive(player),
   });
   if (projectiles.length > MAX_PROJECTILES) {
     projectiles.splice(0, projectiles.length - MAX_PROJECTILES);
@@ -752,7 +1466,7 @@ function updateAsteroids(dt: number, now: number): void {
         (base) => distanceSquared(base.x, base.y, asteroid.x, asteroid.y) < 36_000_000,
       )
     ) {
-      resetAsteroid(asteroid, randomPlayer());
+      resetAsteroid(asteroid);
     }
   }
 }
@@ -811,6 +1525,19 @@ function updateProjectiles(dt: number, now: number): void {
           Math.hypot(projectile.x - player.x, projectile.y - player.y) <=
           radius + projectile.radius
         ) {
+          if (rookiePvpDamageSuppressed(projectile, player)) {
+            broadcastEffect({
+              type: "effect",
+              kind: "shipHit",
+              x: projectile.x,
+              y: projectile.y,
+              team: player.team,
+              intensity: 0.45,
+            });
+            projectile.pierce -= 1;
+            hit = true;
+            break;
+          }
           const source: DamageSource =
             projectile.kind === "turret"
               ? { kind: "turret", team: projectile.team }
@@ -916,6 +1643,11 @@ function steerDrone(projectile: ProjectileState, dt: number): void {
 
 function shatterAsteroid(asteroid: AsteroidState): void {
   const fragments = Math.max(3, Math.round(asteroid.radius / 11));
+  const baseValue = 3 + Math.floor(asteroid.radius / 14);
+  const fragmentValue = Math.max(
+    1,
+    Math.round(baseValue * ASTEROID_KIND_CONFIG[asteroid.kind].salvageMultiplier),
+  );
   for (let index = 0; index < fragments; index += 1) {
     const angle = (Math.PI * 2 * index) / fragments + Math.random() * 0.5;
     const speed = 25 + Math.random() * 45;
@@ -925,7 +1657,7 @@ function shatterAsteroid(asteroid: AsteroidState): void {
       y: asteroid.y + Math.sin(angle) * asteroid.radius * 0.35,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
-      value: 3 + Math.floor(asteroid.radius / 14),
+      value: fragmentValue,
     });
   }
   if (salvage.length > MAX_SALVAGE) {
@@ -977,19 +1709,131 @@ function nearestSalvageMagnet(item: SalvageState): PlayerState | undefined {
   return nearest;
 }
 
+type RamImpactSource = Pick<PlayerState, "x" | "y" | "angle" | "shipClass">;
+
+function ramImpactHitsCircle(
+  attacker: RamImpactSource,
+  targetX: number,
+  targetY: number,
+  targetRadius: number,
+): boolean {
+  const impact = RAM_IMPACT_PROFILES[attacker.shipClass];
+  const config = CLASS_CONFIG[attacker.shipClass];
+  if (!impact) return false;
+  if (impact.arcRadius <= 0) {
+    return (
+      Math.hypot(attacker.x - targetX, attacker.y - targetY) <=
+      config.radius + impact.reachBonus + targetRadius
+    );
+  }
+
+  const cosine = Math.cos(attacker.angle);
+  const sine = Math.sin(attacker.angle);
+  const centerX = attacker.x + cosine * impact.arcOffset;
+  const centerY = attacker.y + sine * impact.arcOffset;
+  const dx = targetX - centerX;
+  const dy = targetY - centerY;
+  const forward = dx * cosine + dy * sine;
+  const lateral = Math.abs(-dx * sine + dy * cosine);
+  if (forward >= 0) {
+    return Math.hypot(forward, lateral) <= impact.arcRadius + targetRadius;
+  }
+  const lateralOverflow = Math.max(0, lateral - impact.arcRadius);
+  return Math.hypot(forward, lateralOverflow) <= targetRadius;
+}
+
+function ramImpactHitsBase(attacker: RamImpactSource, base: MothershipState): boolean {
+  const impact = RAM_IMPACT_PROFILES[attacker.shipClass];
+  if (!impact) return false;
+  if (impact.arcRadius <= 0) {
+    return pointInExpandedRect(attacker.x, attacker.y, base, 28 + impact.reachBonus);
+  }
+
+  const cosine = Math.cos(attacker.angle);
+  const sine = Math.sin(attacker.angle);
+  const centerX = attacker.x + cosine * impact.arcOffset;
+  const centerY = attacker.y + sine * impact.arcOffset;
+  const corners = [
+    [base.x - base.width / 2, base.y - base.height / 2],
+    [base.x + base.width / 2, base.y - base.height / 2],
+    [base.x + base.width / 2, base.y + base.height / 2],
+    [base.x - base.width / 2, base.y + base.height / 2],
+  ].map(([x, y]) => {
+    const dx = x - centerX;
+    const dy = y - centerY;
+    return { forward: dx * cosine + dy * sine, lateral: -dx * sine + dy * cosine };
+  });
+  for (let index = 0; index < corners.length; index += 1) {
+    if (
+      segmentIntersectsForwardHalfDisk(
+        corners[index],
+        corners[(index + 1) % corners.length],
+        impact.arcRadius,
+      )
+    ) {
+      return true;
+    }
+  }
+  return (
+    centerX >= base.x - base.width / 2 &&
+    centerX <= base.x + base.width / 2 &&
+    centerY >= base.y - base.height / 2 &&
+    centerY <= base.y + base.height / 2
+  );
+}
+
+function segmentIntersectsForwardHalfDisk(
+  start: { forward: number; lateral: number },
+  end: { forward: number; lateral: number },
+  radius: number,
+): boolean {
+  let startForward = start.forward;
+  let startLateral = start.lateral;
+  let endForward = end.forward;
+  let endLateral = end.lateral;
+  if (startForward < 0 && endForward < 0) return false;
+  if (startForward < 0 || endForward < 0) {
+    const ratio = startForward / (startForward - endForward);
+    const intersectionLateral = startLateral + (endLateral - startLateral) * ratio;
+    if (startForward < 0) {
+      startForward = 0;
+      startLateral = intersectionLateral;
+    } else {
+      endForward = 0;
+      endLateral = intersectionLateral;
+    }
+  }
+  const deltaForward = endForward - startForward;
+  const deltaLateral = endLateral - startLateral;
+  const lengthSquared = deltaForward * deltaForward + deltaLateral * deltaLateral;
+  const closestRatio =
+    lengthSquared > 0
+      ? Math.max(
+          0,
+          Math.min(1, -(startForward * deltaForward + startLateral * deltaLateral) / lengthSquared),
+        )
+      : 0;
+  const closestForward = startForward + deltaForward * closestRatio;
+  const closestLateral = startLateral + deltaLateral * closestRatio;
+  return Math.hypot(closestForward, closestLateral) <= radius;
+}
+
 function applyDashDamage(player: PlayerState, now: number): void {
   const config = CLASS_CONFIG[player.shipClass];
   const weapon = SHIP_WEAPONS[player.shipClass];
+  const impact = RAM_IMPACT_PROFILES[player.shipClass];
+  if (!impact) return;
   const damage = config.damage * (1 + player.stats.weapon * STAT_BONUSES.weaponDamagePerLevel);
   const asteroidDamage =
     config.damage *
     weapon.miningMultiplier *
     (1 + player.stats.mining * STAT_BONUSES.miningDamagePerLevel);
+  const attackerProtected = rookieProtectionActive(player);
   for (const asteroid of asteroids) {
     const hitKey = `asteroid-${asteroid.id}`;
     if (
       player.dashHits.has(hitKey) ||
-      Math.hypot(player.x - asteroid.x, player.y - asteroid.y) > asteroid.radius + config.radius + 2
+      !ramImpactHitsCircle(player, asteroid.x, asteroid.y, asteroid.radius)
     ) {
       continue;
     }
@@ -1002,13 +1846,15 @@ function applyDashDamage(player: PlayerState, now: number): void {
       x: asteroid.x,
       y: asteroid.y,
       team: player.team,
-      intensity: broken ? Math.min(2.4, asteroid.radius / 24) : 1.2,
+      intensity: broken
+        ? Math.max(impact.effectIntensity, Math.min(2.4, asteroid.radius / 24))
+        : impact.effectIntensity,
     });
     if (broken) {
       shatterAsteroid(asteroid);
     } else {
-      asteroid.vx += Math.cos(player.angle) * 85;
-      asteroid.vy += Math.sin(player.angle) * 85;
+      asteroid.vx += Math.cos(player.angle) * impact.knockback * 0.35;
+      asteroid.vy += Math.sin(player.angle) * impact.knockback * 0.35;
     }
   }
   for (const target of players.values()) {
@@ -1016,13 +1862,20 @@ function applyDashDamage(player: PlayerState, now: number): void {
       !target.alive ||
       target.docked ||
       target.team === player.team ||
+      attackerProtected ||
+      rookieProtectionActive(target) ||
       player.dashHits.has(target.id)
     ) {
       continue;
     }
-    const radius = CLASS_CONFIG[target.shipClass].radius + config.radius;
-    if (Math.hypot(player.x - target.x, player.y - target.y) <= radius) {
+    if (ramImpactHitsCircle(player, target.x, target.y, CLASS_CONFIG[target.shipClass].radius)) {
       player.dashHits.add(target.id);
+      target.vx += Math.cos(player.angle) * impact.knockback;
+      target.vy += Math.sin(player.angle) * impact.knockback;
+      target.ramKnockbackUntil = Math.max(
+        target.ramKnockbackUntil,
+        now + RAM_KNOCKBACK_DURATION_MS,
+      );
       const destroyed = damagePlayer(target, damage, now, {
         kind: "player",
         playerId: player.id,
@@ -1035,15 +1888,12 @@ function applyDashDamage(player: PlayerState, now: number): void {
         x: target.x,
         y: target.y,
         team: target.team,
-        intensity: destroyed ? 2 : 1.5,
+        intensity: destroyed ? Math.max(2.4, impact.effectIntensity) : impact.effectIntensity,
       });
     }
   }
   const enemyBase = motherships[otherTeam(player.team)];
-  if (
-    !player.dashHits.has(`base-${enemyBase.team}`) &&
-    pointInExpandedRect(player.x, player.y, enemyBase, 28)
-  ) {
+  if (!player.dashHits.has(`base-${enemyBase.team}`) && ramImpactHitsBase(player, enemyBase)) {
     player.dashHits.add(`base-${enemyBase.team}`);
     damageMothership(enemyBase, damage * 1.2, now, {
       kind: "player",
@@ -1095,6 +1945,7 @@ function destroyPlayer(player: PlayerState, now: number, source: DamageSource): 
   player.vx = 0;
   player.vy = 0;
   player.mothershipThreatEnteredAt = null;
+  if (player.bot) clearBotResourceTargets(player.bot);
   classMetrics(player.shipClass).deaths += 1;
   const droppedResources = player.cargo + killBounty(player);
   if (source.kind === "player" && source.team !== player.team) {
@@ -1147,6 +1998,7 @@ function respawnPlayer(player: PlayerState): void {
   player.vy = 0;
   player.angle = player.team === "cyan" ? 0 : Math.PI;
   player.dashUntil = 0;
+  player.ramKnockbackUntil = 0;
   player.docked = true;
   player.mothershipThreatEnteredAt = null;
 }
@@ -1292,8 +2144,17 @@ function resetRound(now: number): void {
     player.docked = true;
     player.respawnAt = 0;
     player.dashUntil = 0;
+    player.ramKnockbackUntil = 0;
     player.mothershipThreatEnteredAt = null;
     player.angle = player.team === "cyan" ? 0 : Math.PI;
+    if (player.bot) {
+      player.bot.mode = "mine";
+      player.bot.nextDecisionAt = now;
+      player.bot.attackUntil = 0;
+      player.bot.nextAttackAt = now + 35_000 + (player.bot.serial % 4) * 5000;
+      player.bot.launchUntil = now + BOT_LAUNCH_COMMIT_MS;
+      clearBotResourceTargets(player.bot);
+    }
     classMetrics("scout").picks += 1;
   }
   if (now > 0) {
@@ -1302,8 +2163,10 @@ function resetRound(now: number): void {
 }
 
 function makeAsteroid(id: number): AsteroidState {
+  const home: AsteroidState["home"] = id % 3 === 0 ? "cyan" : id % 3 === 1 ? "magenta" : "center";
   const asteroid: AsteroidState = {
     id,
+    kind: "rock",
     x: 0,
     y: 0,
     vx: 0,
@@ -1313,51 +2176,66 @@ function makeAsteroid(id: number): AsteroidState {
     maxHp: 0,
     seed: 0,
     nextMothershipImpactAt: 0,
+    home,
   };
-  const anchor =
-    id % 3 === 0
-      ? motherships.cyan
-      : id % 3 === 1
-        ? motherships.magenta
-        : { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
-  resetAsteroid(asteroid, anchor);
+  resetAsteroid(asteroid);
   return asteroid;
 }
 
-function resetAsteroid(
-  asteroid: AsteroidState,
-  anchor: { x: number; y: number } | undefined = randomPlayer(),
-): void {
-  const center = anchor ?? { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
+function resetAsteroid(asteroid: AsteroidState): void {
+  const center = asteroidHomeAnchor(asteroid);
+  const centerField = asteroid.home === "center";
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const spawnAngle = Math.random() * Math.PI * 2;
     const spawnDistance =
-      ASTEROID_SPAWN_MIN_DISTANCE + Math.random() * ASTEROID_SPAWN_DISTANCE_RANGE;
+      (centerField ? CENTER_ASTEROID_SPAWN_MIN_DISTANCE : ASTEROID_SPAWN_MIN_DISTANCE) +
+      Math.random() *
+        (centerField ? CENTER_ASTEROID_SPAWN_DISTANCE_RANGE : ASTEROID_SPAWN_DISTANCE_RANGE);
     asteroid.x = center.x + Math.cos(spawnAngle) * spawnDistance;
     asteroid.y = center.y + Math.sin(spawnAngle) * spawnDistance;
     if (
       !Object.values(motherships).some((base) =>
-        pointInExpandedRect(asteroid.x, asteroid.y, base, 360),
+        pointInExpandedRect(asteroid.x, asteroid.y, base, ASTEROID_MOTHERSHIP_SPAWN_MARGIN),
       )
     ) {
       break;
     }
   }
+  asteroid.kind = asteroidKindForRoll(asteroid.home, Math.random());
+  const config = ASTEROID_KIND_CONFIG[asteroid.kind];
   const direction = Math.random() * Math.PI * 2;
-  const speed = 18 + Math.random() * 54;
+  const speed = (18 + Math.random() * 54) * config.speedMultiplier;
   asteroid.vx = Math.cos(direction) * speed;
   asteroid.vy = Math.sin(direction) * speed;
-  asteroid.radius = 27 + Math.random() * 35;
-  asteroid.maxHp = asteroid.radius * 2.4;
+  asteroid.radius = config.minimumRadius + Math.random() * config.radiusRange;
+  asteroid.maxHp = asteroid.radius * config.hpPerRadius;
   asteroid.hp = asteroid.maxHp;
   asteroid.seed = Math.floor(Math.random() * 100000);
   asteroid.nextMothershipImpactAt = 0;
 }
 
-function randomPlayer(): PlayerState | undefined {
-  if (players.size === 0) return undefined;
-  const candidates = Array.from(players.values());
-  return candidates[Math.floor(Math.random() * candidates.length)];
+function asteroidHomeAnchor(asteroid: Pick<AsteroidState, "home">): { x: number; y: number } {
+  return asteroid.home === "center"
+    ? { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }
+    : motherships[asteroid.home];
+}
+
+function asteroidKindForRoll(home: AsteroidHome, roll: number): AsteroidKind {
+  const thresholds = home === "center" ? CENTER_ASTEROID_KINDS : BASE_ASTEROID_KINDS;
+  const safeRoll = Math.max(0, Math.min(0.999999, roll));
+  return thresholds.find((threshold) => safeRoll < threshold.maximumRoll)?.kind ?? "rock";
+}
+
+function expectedAsteroidSalvageMultiplier(home: AsteroidHome): number {
+  const thresholds = home === "center" ? CENTER_ASTEROID_KINDS : BASE_ASTEROID_KINDS;
+  let previous = 0;
+  let expected = 0;
+  for (const threshold of thresholds) {
+    expected +=
+      (threshold.maximumRoll - previous) * ASTEROID_KIND_CONFIG[threshold.kind].salvageMultiplier;
+    previous = threshold.maximumRoll;
+  }
+  return expected;
 }
 
 function createBalanceMetrics(now: number): RoundBalanceMetrics {
@@ -1376,6 +2254,9 @@ function createBalanceMetrics(now: number): RoundBalanceMetrics {
     turretWarningMs: 0,
     turretWarningSamples: 0,
     turretFlightMs: 0,
+    botDockings: 0,
+    botLaunches: 0,
+    botUnfundedDockings: 0,
     firstTransform: null,
     firstKill: null,
     firstPlayerBaseDamage: null,
@@ -1447,6 +2328,11 @@ function reportBalance(now: number, reason: "interval" | "final", winningTeam?: 
         averageWarningToHitMs: turretWarningMs,
         averageFlightMs: turretFlightMs,
       },
+      bots: {
+        dockings: balanceMetrics.botDockings,
+        launches: balanceMetrics.botLaunches,
+        unfundedDockings: balanceMetrics.botUnfundedDockings,
+      },
       classes,
     })}`,
   );
@@ -1466,6 +2352,74 @@ function roundedTeamValues(values: Record<Team, number>): Record<Team, number> {
 }
 
 function validateBalanceTuning(): void {
+  if (
+    asteroidKindForRoll("cyan", 0.999) !== "crystal" ||
+    asteroidKindForRoll("center", 0.999) !== "core" ||
+    expectedAsteroidSalvageMultiplier("center") < expectedAsteroidSalvageMultiplier("cyan") * 1.3
+  ) {
+    throw new Error("Center asteroid value progression regression");
+  }
+  const coordinatedTarget = nearestUnclaimedResource(
+    0,
+    0,
+    [
+      { id: 1, x: 10, y: 0 },
+      { id: 2, x: 20, y: 0 },
+      { id: 3, x: 80, y: 0 },
+    ],
+    [{ id: 1, x: 10, y: 0 }],
+    100,
+    40,
+  );
+  if (coordinatedTarget?.id !== 3) {
+    throw new Error("Bot resource reservation regression");
+  }
+  const cyanFront =
+    motherships.cyan.x + motherships.cyan.width / 2 + BOT_MOTHERSHIP_RESOURCE_CLEARANCE;
+  const magentaFront =
+    motherships.magenta.x - motherships.magenta.width / 2 - BOT_MOTHERSHIP_RESOURCE_CLEARANCE;
+  if (
+    botLaunchDirection("cyan") !== 1 ||
+    botLaunchDirection("magenta") !== -1 ||
+    !botResourceInMiningLane("cyan", { x: cyanFront, y: motherships.cyan.y }) ||
+    botResourceInMiningLane("cyan", { x: cyanFront - 1, y: motherships.cyan.y }) ||
+    !botResourceInMiningLane("magenta", { x: magentaFront, y: motherships.magenta.y }) ||
+    botResourceInMiningLane("magenta", { x: magentaFront + 1, y: motherships.magenta.y })
+  ) {
+    throw new Error("Bot mothership launch lane regression");
+  }
+  const damagedBot = { hp: 40, maxHp: 100, bank: 0, cargo: 0 };
+  if (
+    botCanFundRepair(damagedBot) ||
+    botCanFundRepair({ ...damagedBot, cargo: 8 }) ||
+    !botCanFundRepair({ ...damagedBot, cargo: 11 }) ||
+    !botCanFundRepair({ ...damagedBot, bank: 8 })
+  ) {
+    throw new Error("Bot repair funding regression");
+  }
+  const rookie = {
+    team: "cyan" as const,
+    x: motherships.cyan.x + motherships.cyan.width / 2 + ROOKIE_SECTOR_MARGIN,
+    y: motherships.cyan.y,
+    shipClass: "needle" as const,
+  };
+  if (
+    !rookieProtectionActive(rookie) ||
+    rookieProtectionActive({ ...rookie, x: rookie.x + 1 }) ||
+    rookieProtectionActive({ ...rookie, shipClass: "lance" }) ||
+    rookieProtectionActive({ ...rookie, team: "magenta" })
+  ) {
+    throw new Error("Rookie sector boundary regression");
+  }
+  const outsideRookie = { ...rookie, x: rookie.x + 1 };
+  if (
+    !rookiePvpDamageSuppressed({ kind: "bolt", rookieProtectedAtLaunch: false }, rookie) ||
+    !rookiePvpDamageSuppressed({ kind: "bolt", rookieProtectedAtLaunch: true }, outsideRookie) ||
+    rookiePvpDamageSuppressed({ kind: "bolt", rookieProtectedAtLaunch: false }, outsideRookie) ||
+    rookiePvpDamageSuppressed({ kind: "turret", rookieProtectedAtLaunch: true }, rookie)
+  ) {
+    throw new Error("Rookie PVP suppression regression");
+  }
   const minimumMagnetPull = miningMagnetPull(1);
   const maximumMagnetPull = miningMagnetPull(MAX_STAT_LEVEL);
   if (
@@ -1479,6 +2433,16 @@ function validateBalanceTuning(): void {
   ) {
     throw new Error("Mining magnet progression regression");
   }
+  const apexRam: RamImpactSource = { x: 0, y: 0, angle: 0, shipClass: "behemoth" };
+  const starterRam: RamImpactSource = { x: 0, y: 0, angle: 0, shipClass: "ram" };
+  if (
+    !ramImpactHitsCircle(apexRam, 60, 80, 10) ||
+    !ramImpactHitsCircle(apexRam, 130, 0, 10) ||
+    ramImpactHitsCircle(apexRam, -40, 0, 10) ||
+    !ramImpactHitsCircle(starterRam, 54, 0, 10)
+  ) {
+    throw new Error("Ram impact geometry regression");
+  }
   const testScout: Pick<PlayerState, "shipClass" | "maxHp"> = {
     shipClass: "scout",
     maxHp: CLASS_CONFIG.scout.maxHp * (1 + MAX_STAT_LEVEL * STAT_BONUSES.hullPerLevel),
@@ -1488,12 +2452,21 @@ function validateBalanceTuning(): void {
   }
   for (const shipClass of Object.keys(CLASS_CONFIG) as ShipClass[]) {
     if (shipTransformTier(shipClass) !== 4) continue;
-    const target = { shipClass, maxHp: CLASS_CONFIG[shipClass].maxHp };
-    const damage = mothershipTurretDamage(target, MOTHERSHIP_TURRET_MIN_PLAYER_DAMAGE);
-    const lethalHits = Math.ceil(target.maxHp / damage);
-    const minimumExposureSeconds = ((lethalHits - 1) * MOTHERSHIP_PLAYER_VOLLEY_MS) / 1000;
-    if (minimumExposureSeconds < APEX_MIN_SIEGE_SECONDS) {
-      throw new Error(`${shipClass} apex siege window is too short`);
+    const baseHp = CLASS_CONFIG[shipClass].maxHp;
+    const unarmoredTarget = { shipClass, maxHp: baseHp };
+    const fullHullTarget = {
+      shipClass,
+      maxHp: baseHp * (1 + MAX_STAT_LEVEL * STAT_BONUSES.hullPerLevel),
+    };
+    const damage = mothershipTurretDamage(fullHullTarget, MOTHERSHIP_TURRET_MIN_PLAYER_DAMAGE);
+    const unarmoredExposureSeconds = focusedFireSurvivalSeconds(unarmoredTarget, damage);
+    const fullHullExposureSeconds = focusedFireSurvivalSeconds(fullHullTarget, damage);
+    if (
+      fullHullExposureSeconds < APEX_MIN_SIEGE_SECONDS ||
+      fullHullExposureSeconds > APEX_MAX_SIEGE_SECONDS ||
+      fullHullExposureSeconds <= unarmoredExposureSeconds
+    ) {
+      throw new Error(`${shipClass} apex siege window is outside its target`);
     }
   }
   if (
@@ -1514,8 +2487,16 @@ function mothershipTurretDamage(
   if (tier === 0) return target.maxHp + 1;
   return Math.max(
     minimumEvolvedFrameDamage,
-    target.maxHp * MOTHERSHIP_TURRET_DAMAGE_FRACTION_BY_TIER[tier],
+    CLASS_CONFIG[target.shipClass].maxHp * MOTHERSHIP_TURRET_DAMAGE_FRACTION_BY_TIER[tier],
   );
+}
+
+function focusedFireSurvivalSeconds(
+  target: Pick<PlayerState, "maxHp">,
+  damagePerHit: number,
+): number {
+  const lethalHits = Math.ceil(target.maxHp / damagePerHit);
+  return ((lethalHits - 1) * MOTHERSHIP_PLAYER_VOLLEY_MS) / 1000;
 }
 
 function spawnSalvageBurst(x: number, y: number, totalValue: number, team?: Team): void {
@@ -1557,6 +2538,15 @@ function damageMothership(
     balanceMetrics.asteroidBaseDamage[base.team] += appliedDamage;
   }
   if (base.hp <= 0) {
+    base.hp = 0;
+    broadcastEffect({
+      type: "effect",
+      kind: "baseBreak",
+      x: base.x,
+      y: base.y,
+      team: base.team,
+      intensity: 5.5,
+    });
     declareWinner(source.kind === "player" ? source.team : otherTeam(base.team), now);
   }
 }
@@ -1589,6 +2579,7 @@ function sendSnapshots(now: number): void {
   const allAsteroids = asteroids.map(
     (asteroid): AsteroidView => ({
       id: asteroid.id,
+      kind: asteroid.kind,
       x: rounded(asteroid.x),
       y: rounded(asteroid.y),
       vx: rounded(asteroid.vx),
@@ -1711,6 +2702,7 @@ function sendSalvageSnapshots(): void {
 }
 
 function sendEvent(connectionId: string, text: string, tone: EventMessage["tone"]): void {
+  if (players.get(connectionId)?.bot) return;
   const message: EventMessage = { type: "event", text, tone };
   server.streams.send(connectionId, encodeEvent(message));
 }
@@ -1731,11 +2723,17 @@ function broadcastEffect(message: Omit<EffectMessage, "id">): void {
     })
     .map((connection) => connection.id);
   if (recipients.length > 0) {
-    server.datagrams.broadcast(encodeEffect(effect), { only: recipients });
+    const bytes = encodeEffect(effect);
+    if (effect.kind === "baseBreak") {
+      for (const connectionId of recipients) server.streams.send(connectionId, bytes);
+    } else {
+      server.datagrams.broadcast(bytes, { only: recipients });
+    }
   }
 }
 
 function sendEffect(connectionId: string, message: Omit<EffectMessage, "id">): void {
+  if (players.get(connectionId)?.bot) return;
   server.datagrams.send(connectionId, encodeEffect({ ...message, id: nextEffectId++ }));
 }
 
@@ -1769,6 +2767,25 @@ function playerInMothershipThreat(player: PlayerState, base: MothershipState): b
     }
   }
   return false;
+}
+
+function rookieProtectionActive(
+  player: Pick<PlayerState, "team" | "x" | "y" | "shipClass">,
+): boolean {
+  return (
+    shipTransformTier(player.shipClass) <= ROOKIE_PROTECTED_MAX_TIER &&
+    pointInExpandedRect(player.x, player.y, motherships[player.team], ROOKIE_SECTOR_MARGIN)
+  );
+}
+
+function rookiePvpDamageSuppressed(
+  projectile: Pick<ProjectileState, "kind" | "rookieProtectedAtLaunch">,
+  target: Pick<PlayerState, "team" | "x" | "y" | "shipClass">,
+): boolean {
+  return (
+    projectile.kind !== "turret" &&
+    (projectile.rookieProtectedAtLaunch === true || rookieProtectionActive(target))
+  );
 }
 
 function projectileOwnerWireId(ownerId: string): string {

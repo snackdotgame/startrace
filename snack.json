@@ -14,8 +14,16 @@
     "titleImage": "snack.svg",
     "maxPlayers": {
       "lowerLimit": 1,
-      "upperLimit": 16,
-      "default": 16
+      "upperLimit": 32,
+      "default": 32
+    },
+    "serverConfigSchema": {
+      "botFill": {
+        "type": "number",
+        "default": 8,
+        "label": "Bot fill",
+        "description": "Target combatant count filled by bots. Set to 0 to run without bots."
+      }
     },
     "name": "Startrace",
     "platforms": ["desktop", "phone", "tablet"],
