@@ -1,6 +1,6 @@
-# Startrace balance contract
+# Star Trace balance contract
 
-Startrace should feel like a readable vector dogfight where mining creates risk, returning cargo
+Star Trace should feel like a readable vector dogfight where mining creates risk, returning cargo
 creates progression, transformations change play style, and an enemy mothership is a clearly marked
 lethal exclusion zone.
 

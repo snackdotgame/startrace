@@ -53,9 +53,9 @@ const ROOKIE_SECTOR_HINT_MS = 5_000;
 const UPGRADE_READY_TIP_MS = 5_000;
 
 root.innerHTML = `
-  <canvas id="game" aria-label="Startrace game field"></canvas>
+  <canvas id="game" aria-label="Star Trace game field"></canvas>
   <div id="hud">
-    <div id="brand">STARTRACE <span>VECTOR EXTRACTION</span></div>
+    <div id="brand">STAR TRACE <span>VECTOR EXTRACTION</span></div>
     <div id="connection">CONNECTING TO MOTHERSHIP</div>
     <button id="sound-toggle" type="button">SOUND · ARMED</button>
     <div id="base-status">
