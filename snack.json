@@ -28,6 +28,9 @@
     "name": "Star Trace",
     "genre": "shooter",
     "platforms": ["desktop", "phone", "tablet"],
-    "visibility": "public"
+    "visibility": "public",
+    "slug": "star-trace",
+    "id": "4854ac94-d242-499d-97d6-1547302aee37",
+    "versionId": "d6e487a9-4258-4a33-b78d-34572020f0e5"
   }
 }
