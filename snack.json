@@ -18,6 +18,7 @@
       "default": 16
     },
     "name": "Startrace",
+    "platforms": ["desktop", "phone", "tablet"],
     "visibility": "private"
   }
 }

@@ -85,6 +85,10 @@ root.innerHTML = `
         <button data-action="repairMothership"><b>REPAIR MOTHERSHIP</b><span>15 TEAM RESERVE</span></button>
       </div>
     </section>
+    <div id="touch-guide" aria-hidden="true">
+      <span class="move"><b>MOVE</b><i>DRAG</i></span>
+      <span class="aim"><b>AIM + FIRE</b><i>DRAG</i></span>
+    </div>
     <div id="prompt">WASD MOVE · MOUSE AIM/FIRE · FLY INSIDE YOUR MOTHERSHIP TO UPGRADE</div>
     <div id="respawn-overlay" role="status" aria-label="Respawn timer" aria-live="polite" aria-hidden="true" hidden>
       <span>SHIP LOST</span><b id="respawn-countdown">4.0</b><em>RECONSTRUCTING AT MOTHERSHIP</em>
@@ -99,16 +103,16 @@ const style = document.createElement("style");
 style.textContent = `
   :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
   * { box-sizing: border-box; }
-  html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #010207; }
-  body { color: #e9fffc; user-select: none; }
+  html, body, #app { width: 100%; height: 100%; min-height: 100dvh; margin: 0; overflow: hidden; background: #010207; }
+  body { color: #e9fffc; user-select: none; overscroll-behavior: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   #game { display: block; position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
   #app::after { content: ""; position: absolute; z-index: 1; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 48%, transparent 48%, #01020755 100%), repeating-linear-gradient(0deg, #0000 0 3px, #aaffff09 3px 4px); }
   #hud { position: fixed; z-index: 2; inset: 0; pointer-events: none; text-transform: uppercase; letter-spacing: .08em; }
-  #brand { position: absolute; top: 20px; left: 52px; font-size: 18px; font-weight: 800; color: #fff; text-shadow: 0 0 12px #63fff3; }
+  #brand { position: absolute; top: calc(20px + env(safe-area-inset-top, 0px)); left: max(52px, calc(12px + env(safe-area-inset-left, 0px))); font-size: 18px; font-weight: 800; color: #fff; text-shadow: 0 0 12px #63fff3; }
   #brand span { display: block; margin-top: 4px; font-size: 10px; font-weight: 600; color: #63fff3; letter-spacing: .18em; }
-  #connection { position: absolute; top: 23px; right: 22px; font-size: 11px; color: #b1c3d5; }
-  #sound-toggle { pointer-events: auto; position: absolute; right: 22px; top: 50px; min-height: 0; width: auto; padding: 7px 10px; color: #a9bdcc; border: 1px solid #345069; background: #030812e8; font-size: 9px; letter-spacing: .08em; }
-  #base-status { position: absolute; top: 18px; left: 50%; width: min(620px, 46vw); transform: translateX(-50%); display: flex; gap: 22px; }
+  #connection { position: absolute; top: calc(23px + env(safe-area-inset-top, 0px)); right: max(22px, calc(12px + env(safe-area-inset-right, 0px))); font-size: 11px; color: #b1c3d5; }
+  #sound-toggle { pointer-events: auto; position: absolute; right: max(22px, calc(12px + env(safe-area-inset-right, 0px))); top: calc(50px + env(safe-area-inset-top, 0px)); min-height: 0; width: auto; padding: 7px 10px; color: #a9bdcc; border: 1px solid #345069; background: #030812e8; font-size: 9px; letter-spacing: .08em; }
+  #base-status { position: absolute; top: calc(18px + env(safe-area-inset-top, 0px)); left: 50%; width: min(620px, 46vw); transform: translateX(-50%); display: flex; gap: 22px; }
   .base { flex: 1; display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; font-size: 10px; }
   .base b { color: #fff; }
   .base em { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: 13px; font-style: normal; }
@@ -116,7 +120,7 @@ style.textContent = `
   .meter i { display: block; width: 100%; height: 100%; transition: width .18s linear; box-shadow: 0 0 9px currentColor; }
   .cyan { color: #63fff3; } .cyan .meter i { background: #63fff3; }
   .magenta { color: #ff5eaa; } .magenta .meter i { background: #ff5eaa; }
-  #pilot-panel { position: absolute; left: 22px; top: 82px; width: 210px; padding: 13px 14px; border-left: 1px solid #63fff3; background: linear-gradient(90deg, #09121bed, transparent); font-size: 11px; }
+  #pilot-panel { position: absolute; left: max(22px, calc(12px + env(safe-area-inset-left, 0px))); top: calc(82px + env(safe-area-inset-top, 0px)); width: 210px; padding: 13px 14px; border-left: 1px solid #63fff3; background: linear-gradient(90deg, #09121bed, transparent); font-size: 11px; }
   #pilot-panel strong { display: block; margin-bottom: 10px; color: #63fff3; font-size: 16px; text-shadow: 0 0 8px currentColor; }
   #pilot-ability { display: none; margin: -5px 0 9px; color: #fff; font-size: 8px; line-height: 1.4; text-shadow: 0 0 8px currentColor; }
   #pilot-ability.visible { display: block; }
@@ -135,7 +139,7 @@ style.textContent = `
   #mothership-range-warning.locked { border-color: #fff; box-shadow: 0 0 30px #ff5eaa55, inset 0 0 22px #ff5eaa1f; }
   #mothership-range-warning b { display: block; font-size: 14px; text-shadow: 0 0 9px currentColor; }
   #mothership-range-warning span { display: block; margin-top: 4px; color: #ffc0da; font-size: 9px; letter-spacing: .12em; }
-  #dock-panel { pointer-events: auto; position: absolute; right: 18px; top: 76px; width: min(540px, calc(100vw - 36px)); padding: 16px; border: 1px solid #63fff3; background: #020711f2; box-shadow: 0 0 28px #16fff020, inset 0 0 22px #16fff00d; opacity: 0; transform: translateX(20px); transition: opacity .18s, transform .18s; pointer-events: none; }
+  #dock-panel { pointer-events: auto; position: absolute; right: max(18px, calc(10px + env(safe-area-inset-right, 0px))); top: calc(76px + env(safe-area-inset-top, 0px)); width: min(540px, calc(100vw - 36px)); max-height: calc(100dvh - 94px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 16px; border: 1px solid #63fff3; background: #020711f2; box-shadow: 0 0 28px #16fff020, inset 0 0 22px #16fff00d; opacity: 0; transform: translateX(20px); transition: opacity .18s, transform .18s; pointer-events: none; }
   #dock-panel.visible { opacity: 1; transform: translateX(0); pointer-events: auto; }
   .dock-title { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 13px; color: #63fff3; }
   .dock-title b { flex: none; font-size: 16px; text-shadow: 0 0 10px currentColor; }
@@ -155,7 +159,19 @@ style.textContent = `
   button em { margin-top: 6px; color: #ecff45; font-size: 10px; font-style: normal; }
   .stat-row button span { color: #63fff3; letter-spacing: .12em; }
   .launch { border-color: #63fff3; }
-  #prompt { position: absolute; bottom: 17px; left: 50%; transform: translateX(-50%); color: #9cafc0; font-size: 10px; white-space: nowrap; }
+  #touch-guide { display: none; position: absolute; inset: 0; pointer-events: none; }
+  #touch-guide span { position: absolute; bottom: max(132px, calc(24% + env(safe-area-inset-bottom, 0px))); min-width: 112px; padding: 10px 13px; border: 1px solid currentColor; background: #030914d9; text-align: center; box-shadow: 0 0 18px #63fff31c; animation: touch-guide-pulse 1.8s ease-in-out infinite; }
+  #touch-guide .move { left: max(18px, calc(12px + env(safe-area-inset-left, 0px))); color: #63fff3; }
+  #touch-guide .aim { right: max(18px, calc(12px + env(safe-area-inset-right, 0px))); color: #ff5eaa; animation-delay: -.9s; }
+  #touch-guide b, #touch-guide i { display: block; }
+  #touch-guide b { font-size: 11px; letter-spacing: .14em; }
+  #touch-guide i { margin-top: 4px; color: #b7c8d8; font-size: 8px; font-style: normal; }
+  body.touch-controls #touch-guide { display: block; }
+  body.touch-controls.touch-move-learned #touch-guide .move,
+  body.touch-controls.touch-aim-learned #touch-guide .aim,
+  body.touch-controls.is-docked #touch-guide .aim,
+  body.touch-controls.is-respawning #touch-guide { display: none; }
+  #prompt { position: absolute; bottom: calc(17px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); color: #9cafc0; font-size: 10px; white-space: nowrap; }
   #respawn-overlay { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; text-align: center; opacity: 0; background: radial-gradient(circle at center, #020812b8 0, #0102075c 31%, transparent 58%); transition: opacity .14s; }
   #respawn-overlay[hidden] { display: none; }
   #respawn-overlay.visible { opacity: 1; }
@@ -167,28 +183,42 @@ style.textContent = `
   #winner b { font-size: clamp(34px, 6vw, 88px); color: #fff; text-shadow: 0 0 25px currentColor; }
   #winner span { font-size: 14px; color: #bdcad8; }
   #playtest-state, #performance-state { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  @keyframes touch-guide-pulse { 0%, 100% { opacity: .72; transform: scale(1); } 50% { opacity: 1; transform: scale(1.035); } }
   @media (max-width: 760px) {
-    #brand { top: 12px; left: 48px; font-size: 15px; }
+    #brand { top: calc(12px + env(safe-area-inset-top, 0px)); left: max(48px, calc(10px + env(safe-area-inset-left, 0px))); font-size: 15px; }
     #brand span { font-size: 8px; }
     #connection { display: none; }
-    #sound-toggle { top: 52px; right: 10px; }
-    #base-status { top: 12px; left: auto; right: 10px; width: 58vw; transform: none; gap: 8px; }
-    .base { font-size: 9px; } .base em { display: none; }
-    #pilot-panel { top: 62px; left: 10px; width: 165px; font-size: 9px; }
-    #pilot-panel strong { font-size: 13px; }
-    #deep-space-warning { top: 112px; min-width: 230px; padding: 7px 12px; }
-    #mothership-range-warning { top: 112px; min-width: 290px; padding: 7px 12px; }
-    #dock-panel { top: auto; bottom: 42px; max-height: 78vh; overflow: auto; }
+    #sound-toggle { top: calc(8px + env(safe-area-inset-top, 0px)); right: max(8px, calc(8px + env(safe-area-inset-right, 0px))); min-width: 44px; min-height: 44px; padding: 8px 10px; }
+    #base-status { top: calc(62px + env(safe-area-inset-top, 0px)); left: max(10px, calc(8px + env(safe-area-inset-left, 0px))); right: max(10px, calc(8px + env(safe-area-inset-right, 0px))); width: auto; transform: none; gap: 12px; }
+    .base { font-size: 10px; } .base em { display: none; }
+    #pilot-panel { top: calc(104px + env(safe-area-inset-top, 0px)); left: max(10px, calc(8px + env(safe-area-inset-left, 0px))); width: 178px; font-size: 10px; }
+    #pilot-panel strong { font-size: 14px; }
+    #deep-space-warning { top: calc(108px + env(safe-area-inset-top, 0px)); min-width: min(260px, calc(100vw - 24px)); padding: 7px 12px; }
+    #mothership-range-warning { top: calc(108px + env(safe-area-inset-top, 0px)); min-width: min(330px, calc(100vw - 24px)); padding: 7px 12px; }
+    #dock-panel { top: auto; bottom: max(10px, calc(8px + env(safe-area-inset-bottom, 0px))); max-height: calc(100dvh - 82px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+    body.touch-controls #dock-panel { width: min(58vw, 420px); }
     .upgrade-row { grid-template-columns: repeat(2, 1fr); }
     .repair-row { grid-template-columns: 1fr; }
-    #prompt { bottom: 10px; width: calc(100vw - 20px); font-size: 9px; line-height: 1.4; text-align: center; white-space: normal; }
+    #prompt { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); width: calc(100vw - 20px); font-size: 10px; line-height: 1.4; text-align: center; white-space: normal; }
+    body.touch-controls #prompt { display: none; }
   }
   @media (max-width: 520px) {
     .dock-title { align-items: flex-start; flex-direction: column; gap: 6px; }
     .dock-title span { text-align: left; }
+    body.touch-controls #dock-panel { left: max(42vw, calc(126px + env(safe-area-inset-left, 0px))); right: max(8px, calc(8px + env(safe-area-inset-right, 0px))); width: auto; padding: 12px; }
+    body.touch-controls #dock-panel .upgrade-row,
+    body.touch-controls #dock-panel .repair-row { grid-template-columns: 1fr; }
+    body.touch-controls #pilot-panel { width: 164px; padding: 10px 11px; }
+  }
+  @media (max-height: 560px) and (orientation: landscape) {
+    #pilot-panel { top: calc(64px + env(safe-area-inset-top, 0px)); }
+    #base-status { top: calc(12px + env(safe-area-inset-top, 0px)); width: min(520px, 50vw); left: 50%; right: auto; transform: translateX(-50%); }
+    #dock-panel { top: calc(62px + env(safe-area-inset-top, 0px)); bottom: max(8px, calc(8px + env(safe-area-inset-bottom, 0px))); max-height: none; }
+    #touch-guide span { bottom: max(72px, calc(18% + env(safe-area-inset-bottom, 0px))); }
   }
   @media (prefers-reduced-motion: reduce) {
     #toast, #deep-space-warning, #mothership-range-warning, #dock-panel, #respawn-overlay, #winner, .meter i { transition: none; }
+    #touch-guide span { animation: none; }
   }
 `;
 document.head.append(style);
@@ -230,6 +260,13 @@ const REMOTE_TURN_RESPONSE = 18;
 const DEEP_SPACE_MARGIN = 850;
 const CAMERA_SCALE_BY_TIER = [1, 0.89, 0.81, 0.75, 0.71] as const;
 const CAMERA_ZOOM_RESPONSE = 3.5;
+const VECTOR_GRID_SPACING = 320;
+const VECTOR_GRID_MAJOR_INTERVAL = 4;
+const NAVIGATION_LANE_Y = [WORLD_HEIGHT * 0.25, WORLD_HEIGHT * 0.5, WORLD_HEIGHT * 0.75] as const;
+const TOUCH_MOVE_SIDE_FRACTION = 0.45;
+const TOUCH_STICK_RADIUS = 58;
+const TOUCH_STICK_DEAD_ZONE = 0.16;
+const TOUCH_GUIDE_TIMEOUT_MS = 12_000;
 
 let snapshot: SnapshotMessage | undefined;
 let renderedTransformClass: ShipClass | undefined;
@@ -265,6 +302,7 @@ let soundEnabled = true;
 let lastPickupSoundAt = -Infinity;
 const turretAngles = new Map<string, number>();
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const touchControlsEnabled = isTouchDevice();
 let inputSendInFlight = false;
 let queuedInput: Uint8Array | undefined;
 let actionSendInFlight = false;
@@ -283,10 +321,11 @@ let frameVisibleEntities = 0;
 let maxVisibleEntitiesSinceReport = 0;
 let maxPredictionStepsSinceReport = 0;
 let mothershipThreatStartedAt = 0;
-let touchMove:
-  | { id: number; startX: number; startY: number; currentX: number; currentY: number }
-  | undefined;
-let touchAimId: number | undefined;
+let localShipWasAlive = true;
+let touchMove: TouchStick | undefined;
+let touchAim: TouchStick | undefined;
+let touchGuideTimer = 0;
+let touchMouseEmulation = false;
 
 interface PredictedSelf {
   x: number;
@@ -294,6 +333,14 @@ interface PredictedSelf {
   vx: number;
   vy: number;
   angle: number;
+}
+
+interface TouchStick {
+  id: number;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
 }
 
 interface Particle {
@@ -334,9 +381,13 @@ if (import.meta.env.DEV) {
   runProgressionSelfTest();
 }
 window.addEventListener("resize", resize);
+window.visualViewport?.addEventListener("resize", resize);
 window.addEventListener("keydown", onKeyDown);
 window.addEventListener("keyup", onKeyUp);
-window.addEventListener("blur", resetInputState);
+window.addEventListener("blur", () => {
+  resetInputState();
+  sendInput();
+});
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     resetInputState();
@@ -346,6 +397,7 @@ document.addEventListener("visibilitychange", () => {
   lastFrameAt = performance.now();
 });
 bindInputSurface(canvas);
+setupTouchControls();
 soundToggle.addEventListener("click", () => {
   soundEnabled = !soundEnabled;
   soundToggle.textContent = soundEnabled ? "SOUND · ON" : "SOUND · OFF";
@@ -459,8 +511,9 @@ function sendInput(): void {
     Number(keys.has("KeyS") || keys.has("ArrowDown")) -
     Number(keys.has("KeyW") || keys.has("ArrowUp"));
   if (touchMove) {
-    moveX += clamp((touchMove.currentX - touchMove.startX) / 65, -1, 1);
-    moveY += clamp((touchMove.currentY - touchMove.startY) / 65, -1, 1);
+    const touchVector = touchStickVector(touchMove);
+    moveX += touchVector.x;
+    moveY += touchVector.y;
   }
   const magnitude = Math.hypot(moveX, moveY);
   if (magnitude > 1) {
@@ -533,6 +586,13 @@ async function flushActions(): Promise<void> {
 
 function onKeyDown(event: KeyboardEvent): void {
   unlockAudio();
+  if (import.meta.env.DEV && event.code === "KeyT" && !event.repeat) {
+    touchMouseEmulation = !touchMouseEmulation;
+    if (touchMouseEmulation) activateTouchControls();
+    resetInputState();
+    sendInput();
+    return;
+  }
   if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.code)) {
     event.preventDefault();
   }
@@ -557,24 +617,114 @@ function onKeyUp(event: KeyboardEvent): void {
   if (event.code === "Space") sendInput();
 }
 
+function touchOverride(): string | null {
+  const queryValue = new URLSearchParams(window.location.search).get("touch");
+  if (queryValue !== null) return queryValue;
+  try {
+    return window.localStorage.getItem("snack-touch");
+  } catch {
+    return null;
+  }
+}
+
+function isTouchDevice(): boolean {
+  const override = touchOverride();
+  if (override === "1" || override === "true") return true;
+  if (override === "0" || override === "false") return false;
+  return (
+    (window.matchMedia?.("(hover: none) and (pointer: coarse)").matches ?? false) ||
+    (navigator.maxTouchPoints ?? 0) > 0
+  );
+}
+
+function setupTouchControls(): void {
+  canvas.addEventListener("touchstart", preventTouchGesture, { passive: false });
+  if (touchControlsEnabled) activateTouchControls();
+}
+
+function activateTouchControls(): void {
+  document.body.classList.add("touch-controls");
+  required<HTMLElement>("#prompt").textContent =
+    "LEFT DRAG MOVE · RIGHT DRAG AIM + FIRE · ENTER MOTHERSHIP TO UPGRADE";
+}
+
+function preventTouchGesture(event: TouchEvent): void {
+  event.preventDefault();
+}
+
+function createTouchStick(event: PointerEvent): TouchStick {
+  return {
+    id: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    currentX: event.clientX,
+    currentY: event.clientY,
+  };
+}
+
+function touchStickVector(stick: TouchStick): { x: number; y: number } {
+  const dx = stick.currentX - stick.startX;
+  const dy = stick.currentY - stick.startY;
+  const distance = Math.hypot(dx, dy);
+  if (distance === 0) return { x: 0, y: 0 };
+  const magnitude = Math.min(1, distance / TOUCH_STICK_RADIUS);
+  if (magnitude < TOUCH_STICK_DEAD_ZONE) return { x: 0, y: 0 };
+  const strength = (magnitude - TOUCH_STICK_DEAD_ZONE) / (1 - TOUCH_STICK_DEAD_ZONE);
+  return { x: (dx / distance) * strength, y: (dy / distance) * strength };
+}
+
+function updateTouchAim(): void {
+  if (!touchAim) return;
+  const vector = touchStickVector(touchAim);
+  const magnitude = Math.hypot(vector.x, vector.y);
+  if (magnitude === 0) {
+    pointerFire = false;
+    return;
+  }
+  const distance = Math.max(150, Math.min(viewportWidth(), viewportHeight()) * 0.42);
+  aimScreenX = viewportWidth() / 2 + (vector.x / magnitude) * distance;
+  aimScreenY = viewportHeight() / 2 + (vector.y / magnitude) * distance;
+  pointerFire = true;
+}
+
+function teachTouchControl(control: "move" | "aim"): void {
+  document.body.classList.add(control === "move" ? "touch-move-learned" : "touch-aim-learned");
+  if (touchGuideTimer !== 0) return;
+  touchGuideTimer = window.setTimeout(() => {
+    document.body.classList.add("touch-move-learned", "touch-aim-learned");
+    touchGuideTimer = 0;
+  }, TOUCH_GUIDE_TIMEOUT_MS);
+}
+
+function isTouchControlPointer(event: PointerEvent): boolean {
+  return (
+    event.pointerType === "touch" ||
+    (import.meta.env.DEV && event.pointerType === "mouse" && touchMouseEmulation)
+  );
+}
+
 function onPointerDown(event: PointerEvent): void {
   unlockAudio();
+  if (isTouchControlPointer(event)) {
+    event.preventDefault();
+    activateTouchControls();
+    if (event.clientX < viewportWidth() * TOUCH_MOVE_SIDE_FRACTION && !touchMove) {
+      touchMove = createTouchStick(event);
+      teachTouchControl("move");
+    } else if (!touchAim) {
+      touchAim = createTouchStick(event);
+      pointerFire = false;
+      teachTouchControl("aim");
+    }
+    inputSurface.setPointerCapture(event.pointerId);
+    sendInput();
+    return;
+  }
   inputSurface.setPointerCapture(event.pointerId);
   aimScreenX = event.clientX;
   aimScreenY = event.clientY;
-  if (event.pointerType === "touch" && event.clientX < window.innerWidth * 0.45) {
-    touchMove = {
-      id: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      currentX: event.clientX,
-      currentY: event.clientY,
-    };
-  } else {
-    pointerFire = true;
-    if (event.pointerType === "touch") touchAimId = event.pointerId;
-    sendInput();
-  }
+  pointerFire = true;
+  sendInput();
 }
 
 function onPointerMove(event: PointerEvent): void {
@@ -583,22 +733,28 @@ function onPointerMove(event: PointerEvent): void {
     touchMove.currentY = event.clientY;
     return;
   }
-  if (event.pointerType !== "touch" || touchAimId === event.pointerId) {
-    aimScreenX = event.clientX;
-    aimScreenY = event.clientY;
+  if (touchAim?.id === event.pointerId) {
+    touchAim.currentX = event.clientX;
+    touchAim.currentY = event.clientY;
+    updateTouchAim();
+    return;
   }
+  if (event.pointerType === "touch") return;
+  aimScreenX = event.clientX;
+  aimScreenY = event.clientY;
 }
 
 function onPointerUp(event: PointerEvent): void {
+  if (touchMove?.id === event.pointerId) touchMove = undefined;
+  if (touchAim?.id === event.pointerId) {
+    touchAim = undefined;
+    pointerFire = false;
+  }
+  if (event.pointerType !== "touch") pointerFire = false;
   if (inputSurface.hasPointerCapture(event.pointerId)) {
     inputSurface.releasePointerCapture(event.pointerId);
   }
-  if (touchMove?.id === event.pointerId) touchMove = undefined;
-  if (event.pointerType !== "touch" || touchAimId === event.pointerId) {
-    pointerFire = false;
-    touchAimId = undefined;
-    sendInput();
-  }
+  sendInput();
 }
 
 function render(now: number): void {
@@ -612,7 +768,7 @@ function render(now: number): void {
   const width = canvas.width / dpr;
   const height = canvas.height / dpr;
   context.setTransform(dpr, 0, 0, dpr, 0, 0);
-  context.fillStyle = "#010207";
+  context.fillStyle = "#02030a";
   context.fillRect(0, 0, width, height);
 
   updateCamera(frameSeconds);
@@ -628,9 +784,11 @@ function render(now: number): void {
     dpr * (view.offsetX + shakeX),
     dpr * (view.offsetY + shakeY),
   );
+  drawWorldBackdrop(now);
   drawStars();
 
   if (snapshot) {
+    for (const base of snapshot.motherships) drawMothershipField(base, now);
     for (const asteroid of snapshot.asteroids) {
       if (!isWorldVisible(asteroid.x, asteroid.y, asteroid.radius + 30)) continue;
       frameVisibleEntities += 1;
@@ -736,7 +894,7 @@ function resetInputState(): void {
   keys.clear();
   pointerFire = false;
   touchMove = undefined;
-  touchAimId = undefined;
+  touchAim = undefined;
   currentInput = { moveX: 0, moveY: 0, fire: false };
 }
 
@@ -987,27 +1145,212 @@ function updateCamera(frameSeconds: number): void {
   cameraTierScale += (targetScale - cameraTierScale) * scaleBlend;
 }
 
+function visibleWorldBounds(padding = 0): {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+} {
+  const halfWidth = viewportWidth() / (renderScale * 2) + padding;
+  const halfHeight = viewportHeight() / (renderScale * 2) + padding;
+  return {
+    left: cameraX - halfWidth,
+    right: cameraX + halfWidth,
+    top: cameraY - halfHeight,
+    bottom: cameraY + halfHeight,
+  };
+}
+
+function drawWorldBackdrop(now: number): void {
+  const bounds = visibleWorldBounds(VECTOR_GRID_SPACING);
+  const firstColumn = Math.floor(bounds.left / VECTOR_GRID_SPACING);
+  const lastColumn = Math.ceil(bounds.right / VECTOR_GRID_SPACING);
+  const firstRow = Math.floor(bounds.top / VECTOR_GRID_SPACING);
+  const lastRow = Math.ceil(bounds.bottom / VECTOR_GRID_SPACING);
+
+  context.save();
+  context.globalCompositeOperation = "source-over";
+  context.lineCap = "butt";
+  context.strokeStyle = "#386079";
+  context.globalAlpha = 0.095;
+  context.lineWidth = 0.55 / renderScale;
+  context.beginPath();
+  for (let column = firstColumn; column <= lastColumn; column += 1) {
+    if (column % VECTOR_GRID_MAJOR_INTERVAL === 0) continue;
+    const x = column * VECTOR_GRID_SPACING;
+    context.moveTo(x, bounds.top);
+    context.lineTo(x, bounds.bottom);
+  }
+  for (let row = firstRow; row <= lastRow; row += 1) {
+    if (row % VECTOR_GRID_MAJOR_INTERVAL === 0) continue;
+    const y = row * VECTOR_GRID_SPACING;
+    context.moveTo(bounds.left, y);
+    context.lineTo(bounds.right, y);
+  }
+  context.stroke();
+
+  context.strokeStyle = "#4b7893";
+  context.globalAlpha = 0.16;
+  context.lineWidth = 0.85 / renderScale;
+  context.beginPath();
+  for (let column = firstColumn; column <= lastColumn; column += 1) {
+    if (column % VECTOR_GRID_MAJOR_INTERVAL !== 0) continue;
+    const x = column * VECTOR_GRID_SPACING;
+    context.moveTo(x, bounds.top);
+    context.lineTo(x, bounds.bottom);
+  }
+  for (let row = firstRow; row <= lastRow; row += 1) {
+    if (row % VECTOR_GRID_MAJOR_INTERVAL !== 0) continue;
+    const y = row * VECTOR_GRID_SPACING;
+    context.moveTo(bounds.left, y);
+    context.lineTo(bounds.right, y);
+  }
+  context.stroke();
+
+  drawNavigationTraces(now, bounds);
+  context.restore();
+}
+
+function drawNavigationTraces(
+  now: number,
+  bounds: { left: number; right: number; top: number; bottom: number },
+): void {
+  const centerX = WORLD_WIDTH / 2;
+  const centerY = WORLD_HEIGHT / 2;
+  const laneStart = WORLD_WIDTH * 0.23;
+  const laneEnd = WORLD_WIDTH * 0.77;
+  if (
+    bounds.right >= laneStart &&
+    bounds.left <= laneEnd &&
+    bounds.bottom >= NAVIGATION_LANE_Y[0] &&
+    bounds.top <= NAVIGATION_LANE_Y[NAVIGATION_LANE_Y.length - 1]
+  ) {
+    context.setLineDash([28 / renderScale, 54 / renderScale]);
+    context.lineDashOffset = reducedMotion.matches ? 0 : (-now * 0.012) / renderScale;
+    context.globalAlpha = 0.15;
+    context.lineWidth = 0.9 / renderScale;
+    context.strokeStyle = TEAM_COLORS.cyan;
+    context.beginPath();
+    for (const y of NAVIGATION_LANE_Y) {
+      if (y < bounds.top || y > bounds.bottom) continue;
+      const start = Math.max(laneStart, bounds.left);
+      const end = Math.min(centerX - 70, bounds.right);
+      if (start >= end) continue;
+      context.moveTo(start, y);
+      context.lineTo(end, y);
+    }
+    context.stroke();
+    context.strokeStyle = TEAM_COLORS.magenta;
+    context.beginPath();
+    for (const y of NAVIGATION_LANE_Y) {
+      if (y < bounds.top || y > bounds.bottom) continue;
+      const start = Math.max(centerX + 70, bounds.left);
+      const end = Math.min(laneEnd, bounds.right);
+      if (start >= end) continue;
+      context.moveTo(start, y);
+      context.lineTo(end, y);
+    }
+    context.stroke();
+    context.setLineDash([]);
+  }
+
+  if (
+    bounds.right >= centerX - 1550 &&
+    bounds.left <= centerX + 1550 &&
+    bounds.bottom >= centerY - 850 &&
+    bounds.top <= centerY + 850
+  ) {
+    const phase = reducedMotion.matches ? 0 : now * 0.000035;
+    context.strokeStyle = "#a7c8d8";
+    context.globalAlpha = 0.13;
+    context.lineWidth = 0.9 / renderScale;
+    context.beginPath();
+    for (let segment = 0; segment < 8; segment += 1) {
+      const start = phase + (Math.PI * 2 * segment) / 8;
+      context.ellipse(centerX, centerY, 1450, 760, 0, start, start + 0.46);
+    }
+    context.stroke();
+  }
+}
+
+function drawMothershipField(base: MothershipView, now: number): void {
+  const outerRadius = 920;
+  if (!isWorldVisible(base.x, base.y, outerRadius + 30)) return;
+  const color = TEAM_COLORS[base.team];
+  const direction = base.team === "cyan" ? 1 : -1;
+  const phase = reducedMotion.matches ? 0 : now * 0.000045 * direction;
+
+  context.save();
+  context.globalCompositeOperation = "lighter";
+  context.strokeStyle = color;
+  context.globalAlpha = 0.2;
+  context.lineWidth = 1.05 / renderScale;
+  context.setLineDash([310, 270]);
+  context.lineDashOffset = reducedMotion.matches ? 0 : -phase * outerRadius;
+  context.beginPath();
+  context.arc(base.x, base.y, outerRadius, 0, Math.PI * 2);
+  context.stroke();
+
+  context.globalAlpha = 0.11;
+  context.lineWidth = 0.75 / renderScale;
+  context.setLineDash([185, 355]);
+  context.lineDashOffset = reducedMotion.matches ? 0 : phase * 930;
+  context.beginPath();
+  context.arc(base.x, base.y, 690, 0, Math.PI * 2);
+  context.stroke();
+
+  context.globalAlpha = 0.28;
+  context.lineWidth = 0.9 / renderScale;
+  context.setLineDash([]);
+  context.beginPath();
+  for (let tick = 0; tick < 8; tick += 1) {
+    const angle = phase + (Math.PI * 2 * tick) / 8;
+    const inner = outerRadius - (tick % 2 === 0 ? 24 : 13);
+    context.moveTo(base.x + Math.cos(angle) * inner, base.y + Math.sin(angle) * inner);
+    context.lineTo(base.x + Math.cos(angle) * outerRadius, base.y + Math.sin(angle) * outerRadius);
+  }
+  context.stroke();
+  context.restore();
+}
+
 function drawStars(): void {
-  context.fillStyle = "#b9d8e0";
+  context.save();
+  context.fillStyle = "#d8f7ff";
   const cellSize = 240;
-  const halfWidth = window.innerWidth / (renderScale * 2);
-  const halfHeight = window.innerHeight / (renderScale * 2);
+  const halfWidth = viewportWidth() / (renderScale * 2);
+  const halfHeight = viewportHeight() / (renderScale * 2);
   const firstColumn = Math.floor((cameraX - halfWidth) / cellSize) - 1;
   const lastColumn = Math.floor((cameraX + halfWidth) / cellSize) + 1;
   const firstRow = Math.floor((cameraY - halfHeight) / cellSize) - 1;
   const lastRow = Math.floor((cameraY + halfHeight) / cellSize) + 1;
+  context.beginPath();
   for (let column = firstColumn; column <= lastColumn; column += 1) {
     for (let row = firstRow; row <= lastRow; row += 1) {
       const random = seeded(((column * 73_856_093) ^ (row * 19_349_663)) >>> 0);
+      let firstX = 0;
+      let firstY = 0;
       for (let index = 0; index < 2; index += 1) {
         const x = (column + random()) * cellSize;
         const y = (row + random()) * cellSize;
-        context.globalAlpha = 0.16 + random() * 0.5;
-        context.fillRect(x, y, 1.3 / renderScale, 1.3 / renderScale);
+        const strength = random();
+        if (index === 0) {
+          firstX = x;
+          firstY = y;
+        } else if (strength > 0.7 && (column + row) % 3 === 0) {
+          context.moveTo(firstX, firstY);
+          context.lineTo(x, y);
+        }
+        context.globalAlpha = 0.2 + strength * 0.62;
+        const size = (strength > 0.9 ? 1.8 : 1.15) / renderScale;
+        context.fillRect(x, y, size, size);
       }
     }
   }
-  context.globalAlpha = 1;
+  context.globalAlpha = 0.1;
+  context.strokeStyle = "#8fc8dc";
+  context.lineWidth = 0.65 / renderScale;
+  context.stroke();
+  context.restore();
 }
 
 function drawAsteroid(asteroid: AsteroidView): void {
@@ -1458,8 +1801,8 @@ function glowDot(x: number, y: number, radius: number, color: string): void {
 }
 
 function isWorldVisible(x: number, y: number, radius: number): boolean {
-  const halfWidth = window.innerWidth / (renderScale * 2) + radius;
-  const halfHeight = window.innerHeight / (renderScale * 2) + radius;
+  const halfWidth = viewportWidth() / (renderScale * 2) + radius;
+  const halfHeight = viewportHeight() / (renderScale * 2) + radius;
   return (
     x >= cameraX - halfWidth &&
     x <= cameraX + halfWidth &&
@@ -1841,17 +2184,54 @@ function drawRadar(dpr: number, screenWidth: number, screenHeight: number): void
 }
 
 function drawTouchControl(dpr: number): void {
-  if (!touchMove) {
-    return;
-  }
+  if (!touchMove && !touchAim) return;
   context.setTransform(dpr, 0, 0, dpr, 0, 0);
-  context.strokeStyle = "#63fff355";
+  context.save();
+  context.globalCompositeOperation = "lighter";
+  if (touchMove) drawTouchStick(touchMove, "#63fff3");
+  if (touchAim) drawTouchStick(touchAim, "#ff5eaa");
+  context.restore();
+}
+
+function drawTouchStick(stick: TouchStick, color: string): void {
+  const dx = stick.currentX - stick.startX;
+  const dy = stick.currentY - stick.startY;
+  const distance = Math.hypot(dx, dy);
+  const scale = distance > TOUCH_STICK_RADIUS ? TOUCH_STICK_RADIUS / distance : 1;
+  const knobX = stick.startX + dx * scale;
+  const knobY = stick.startY + dy * scale;
+
+  context.strokeStyle = color;
+  context.globalAlpha = 0.38;
+  context.lineWidth = 1.4;
+  context.beginPath();
+  context.arc(stick.startX, stick.startY, TOUCH_STICK_RADIUS, 0, Math.PI * 2);
+  context.stroke();
+
+  context.globalAlpha = 0.22;
+  context.beginPath();
+  context.moveTo(stick.startX, stick.startY);
+  context.lineTo(knobX, knobY);
+  context.stroke();
+
+  context.globalAlpha = 0.72;
+  context.lineWidth = 2;
+  context.beginPath();
+  context.arc(knobX, knobY, 17, 0, Math.PI * 2);
+  context.stroke();
+
+  context.globalAlpha = 0.42;
   context.lineWidth = 1;
   context.beginPath();
-  context.arc(touchMove.startX, touchMove.startY, 42, 0, Math.PI * 2);
-  context.stroke();
-  context.beginPath();
-  context.arc(touchMove.currentX, touchMove.currentY, 15, 0, Math.PI * 2);
+  for (let tick = 0; tick < 4; tick += 1) {
+    const angle = (Math.PI * tick) / 2;
+    const inner = TOUCH_STICK_RADIUS - 7;
+    context.moveTo(stick.startX + Math.cos(angle) * inner, stick.startY + Math.sin(angle) * inner);
+    context.lineTo(
+      stick.startX + Math.cos(angle) * (TOUCH_STICK_RADIUS + 4),
+      stick.startY + Math.sin(angle) * (TOUCH_STICK_RADIUS + 4),
+    );
+  }
   context.stroke();
 }
 
@@ -2065,7 +2445,14 @@ function updateHud(message: SnapshotMessage): void {
   required<HTMLElement>("#team-bank").textContent = String(message.teamBank[self.team]);
   required<HTMLElement>("#transform-tier").textContent = String(shipTransformTier(self.shipClass));
   dockPanel.classList.toggle("visible", self.docked);
+  document.body.classList.toggle("is-docked", self.docked);
   const showRespawnTimer = !self.alive && message.winner === null;
+  if (!self.alive && localShipWasAlive) {
+    resetInputState();
+    sendInput();
+  }
+  localShipWasAlive = self.alive;
+  document.body.classList.toggle("is-respawning", showRespawnTimer);
   respawnOverlay.hidden = !showRespawnTimer;
   respawnOverlay.classList.toggle("visible", showRespawnTimer);
   respawnOverlay.setAttribute("aria-hidden", String(!showRespawnTimer));
@@ -2119,6 +2506,9 @@ function updateHud(message: SnapshotMessage): void {
       `salvage=${visibleSalvage.length}`,
       `deep-space=${showDeepSpaceWarning}`,
       `mothership-range=${showMothershipRangeWarning}`,
+      `touch=${document.body.classList.contains("touch-controls")}`,
+      `touch-emulation=${touchMouseEmulation}`,
+      `viewport=${viewportWidth()}x${viewportHeight()}`,
     ].join(" ");
   }
 
@@ -2176,14 +2566,25 @@ function showToast(message: EventMessage): void {
 }
 
 function resize(): void {
-  const dpr = 1;
-  canvas.width = Math.floor(window.innerWidth * dpr);
-  canvas.height = Math.floor(window.innerHeight * dpr);
+  const bounds = canvas.getBoundingClientRect();
+  const fallbackWidth = window.visualViewport?.width ?? window.innerWidth;
+  const fallbackHeight = window.visualViewport?.height ?? window.innerHeight;
+  canvas.width = Math.max(1, Math.floor(bounds.width || fallbackWidth));
+  canvas.height = Math.max(1, Math.floor(bounds.height || fallbackHeight));
+  if (touchAim) updateTouchAim();
+}
+
+function viewportWidth(): number {
+  return Math.max(1, canvas.width);
+}
+
+function viewportHeight(): number {
+  return Math.max(1, canvas.height);
 }
 
 function getView(): { scale: number; offsetX: number; offsetY: number } {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
+  const width = viewportWidth();
+  const height = viewportHeight();
   const scale = clamp(height / 1000, 0.5, 1.35) * cameraTierScale;
   return {
     scale,
